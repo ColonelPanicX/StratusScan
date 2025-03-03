@@ -7,7 +7,7 @@
 ===========================
 
 Title: StratusScan - AWS Resource Exporter Main Menu
-Version: v1.1.0
+Version: v1.3.3
 Date: MAR-03-2025
 
 Description:
@@ -42,7 +42,7 @@ except ImportError:
     sys.exit(1)
 
 # Script metadata
-VERSION = "v1.1.0"
+VERSION = "v1.3.3"
 RELEASE_DATE = "MAR-03-2025"
 
 def print_header():
