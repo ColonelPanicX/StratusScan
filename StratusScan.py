@@ -7,7 +7,7 @@
 ===========================
 
 Title: StratusScan - AWS Resource Exporter Main Menu
-Version: v1.3.0
+Version: v1.3.1
 Date: FEB-28-2025
 
 Description:
@@ -61,7 +61,7 @@ def print_header():
     print("                         STRATUSSCAN                                ")
     print("                  AWS RESOURCE EXPORTER MENU                        ")
     print("====================================================================")
-    print("Version: v1.3.0                                 Date: FEB-28-2025")
+    print("Version: v1.3.1                                 Date: FEB-28-2025")
     print("====================================================================")
     
     # Get the current AWS account ID and map to account name
@@ -217,7 +217,7 @@ def get_script_mapping():
         },
         "6": {
             "name": "RDS (Relational Database Service)",
-            "file": scripts_dir / "rds-instance-export.py",
+            "file": scripts_dir / "rds-export.py",
             "description": "Export RDS instance information"
         },
         "7": {
