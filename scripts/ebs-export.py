@@ -6,8 +6,8 @@
 ===========================
 
 Title: AWS EBS Volume Data Export
-Version: v1.0.1
-Date: MAR-03-2025
+Version: v1.1.0
+Date: MAR-04-2025
 
 Description: 
 This script collects EBS volume information across all AWS regions in an account
@@ -72,6 +72,49 @@ def check_dependencies():
                     subprocess.check_call([sys.executable, "-m", "pip", "install", package])
                     print(f"✓ Successfully installed {package}")
                 except Exception as e:
+                    print(f"Error installing {package}: {e}")
+                    print("Please install it manually with: pip install " + package)
+                    return False
+            return True
+        else:
+            print("Cannot proceed without required dependencies.")
+            return False
+    
+    return True
+
+def get_account_info():
+    """
+    Get the AWS account ID and name of the current session.
+    
+    Returns:
+        tuple: (account_id, account_name)
+    """
+    try:
+        # Create a boto3 STS client to get account information
+        sts_client = boto3.client('sts')
+        # Get the account ID from the STS GetCallerIdentity API call
+        account_id = sts_client.get_caller_identity()["Account"]
+        # Get account name from utils
+        account_name = utils.get_account_name(account_id, default="UNKNOWN-ACCOUNT")
+        return account_id, account_name
+    except Exception as e:
+        print(f"Error getting account information: {e}")
+        return "UNKNOWN", "UNKNOWN-ACCOUNT"
+
+def get_all_regions():
+    """
+    Get a list of all available AWS regions.
+    
+    Returns:
+        list: List of region names
+    """
+    try:
+        # Create a boto3 EC2 client to get region information
+        ec2_client = boto3.client('ec2')
+        # Describe all regions using the EC2 DescribeRegions API call
+        regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
+        return regions
+    except Exception as e:
         print(f"Error getting regions: {e}")
         return []
 
@@ -137,7 +180,7 @@ def print_title():
     print("====================================================================")
     print("AWS EBS VOLUME DATA EXPORT")
     print("====================================================================")
-    print("Version: v1.0.1                                 Date: MAR-03-2025")
+    print("Version: v1.0.2                                 Date: MAR-04-2025")
     print("====================================================================")
     
     # Get account information
@@ -148,13 +191,14 @@ def print_title():
     print("====================================================================")
     return account_id, account_name
 
-def create_excel_file(account_name, volumes_data):
+def create_excel_file(account_name, volumes_data, region_input="all"):
     """
     Export volumes data to an Excel file using pandas.
     
     Args:
         account_name (str): Name of the AWS account
         volumes_data (list): List of dictionaries containing volume information
+        region_input (str): Region specification for filename (default: "all")
         
     Returns:
         str: Path to the exported Excel file
@@ -165,11 +209,14 @@ def create_excel_file(account_name, volumes_data):
     # Convert data to pandas DataFrame
     df = pd.DataFrame(volumes_data)
     
+    # Generate suffix based on region input
+    suffix = "" if region_input == "all" else f"-{region_input}"
+    
     # Generate filename using utils
     filename = utils.create_export_filename(
         account_name, 
         "ebs-volumes", 
-        "", 
+        suffix, 
         datetime.datetime.now().strftime("%m.%d.%Y")
     )
     
@@ -203,13 +250,31 @@ def main():
         
         # Get all available AWS regions
         print("\nGetting list of AWS regions...")
-        regions = get_all_regions()
+        all_regions = get_all_regions()
         
-        if not regions:
+        if not all_regions:
             print("Error: No AWS regions found. Please check your AWS credentials and permissions.")
             sys.exit(1)
             
-        print(f"Found {len(regions)} regions.")
+        print(f"Found {len(all_regions)} regions.")
+        
+        # Prompt user for region selection
+        print("\nWould you like the information for all regions or a specific region?")
+        region_input = input("If all, write \"all\", or if a specific region, write the region's name (ex. us-east-1): ").strip().lower()
+        
+        # Determine which regions to scan
+        if region_input == "all":
+            regions = all_regions
+            print("\nCollecting EBS data from all regions...")
+        else:
+            # Validate the input region
+            if region_input in all_regions:
+                regions = [region_input]
+                print(f"\nCollecting EBS data from region: {region_input}")
+            else:
+                print(f"\nWarning: '{region_input}' does not appear to be a valid region. Defaulting to all regions.")
+                regions = all_regions
+                print("\nCollecting EBS data from all regions...")
         
         # Initialize an empty list to store volume data from all regions
         all_volumes = []
@@ -235,7 +300,7 @@ def main():
         
         # Export data to Excel file
         print("Exporting data to Excel format...")
-        excel_path = create_excel_file(account_name, all_volumes)
+        excel_path = create_excel_file(account_name, all_volumes, region_input)
         print(f"Data exported to Excel: {excel_path}")
         
         print("Script execution completed.")
@@ -249,46 +314,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                    print(f"Error installing {package}: {e}")
-                    print("Please install it manually with: pip install " + package)
-                    return False
-            return True
-        else:
-            print("Cannot proceed without required dependencies.")
-            return False
-    
-    return True
-
-def get_account_info():
-    """
-    Get the AWS account ID and name of the current session.
-    
-    Returns:
-        tuple: (account_id, account_name)
-    """
-    try:
-        # Create a boto3 STS client to get account information
-        sts_client = boto3.client('sts')
-        # Get the account ID from the STS GetCallerIdentity API call
-        account_id = sts_client.get_caller_identity()["Account"]
-        # Get account name from utils
-        account_name = utils.get_account_name(account_id, default="UNKNOWN-ACCOUNT")
-        return account_id, account_name
-    except Exception as e:
-        print(f"Error getting account information: {e}")
-        return "UNKNOWN", "UNKNOWN-ACCOUNT"
-
-def get_all_regions():
-    """
-    Get a list of all available AWS regions.
-    
-    Returns:
-        list: List of region names
-    """
-    try:
-        # Create a boto3 EC2 client to get region information
-        ec2_client = boto3.client('ec2')
-        # Describe all regions using the EC2 DescribeRegions API call
-        regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
-        return regions
-    except Exception as e:

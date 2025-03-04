@@ -6,11 +6,11 @@
 ===========================
 
 Title: AWS Elastic Load Balancer Data Export
-Version: v1.0.1
-Date: FEB-28-2025
+Version: v1.1.0
+Date: MAR-04-2025
 
 Description:
-This script queries for Load Balancers across all regions and 
+This script queries for Load Balancers across all regions or a specific region and 
 exports the list to a single Excel spreadsheet.
 
 """
@@ -48,6 +48,9 @@ except ImportError:
 def print_title_screen():
     """
     Prints a formatted title screen with script information
+    
+    Returns:
+        str: The account name
     """
     # Get the AWS account ID using STS
     try:
@@ -66,6 +69,8 @@ def print_title_screen():
     print("====================================================================")
     print("AWS ELB INVENTORY EXPORT SCRIPT")
     print("====================================================================")
+    print("Version: v1.1.0                                 Date: MAR-04-2025")
+    print("====================================================================")
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")
@@ -75,6 +80,10 @@ def print_title_screen():
 def check_dependencies():
     """
     Checks if required dependencies are installed and offers to install them
+    
+    Returns:
+        bool: True if all dependencies are installed or successfully installed,
+              False otherwise
     """
     required_packages = ['pandas', 'openpyxl']
     missing_packages = []
@@ -83,6 +92,7 @@ def check_dependencies():
     for package in required_packages:
         try:
             __import__(package)
+            print(f"✓ {package} is already installed")
         except ImportError:
             missing_packages.append(package)
     
@@ -95,20 +105,53 @@ def check_dependencies():
             import subprocess
             for package in missing_packages:
                 print(f"Installing {package}...")
-                subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                print(f"{package} installed successfully.")
+                try:
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+                    print(f"{package} installed successfully.")
+                except Exception as e:
+                    print(f"Error installing {package}: {e}")
+                    print("Please install it manually with: pip install " + package)
+                    return False
+            return True
         else:
             print("Script cannot continue without required dependencies. Exiting.")
-            sys.exit(1)
+            return False
+    
+    return True
 
 def get_all_regions():
     """
     Get a list of all available AWS regions
+    
+    Returns:
+        list: List of region names
     """
-    # Create an EC2 client to get all available regions
-    ec2_client = boto3.client('ec2', region_name='us-east-1')
-    regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
-    return regions
+    try:
+        # Create an EC2 client to get all available regions
+        ec2_client = boto3.client('ec2', region_name='us-east-1')
+        regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
+        return regions
+    except Exception as e:
+        print(f"Error getting regions: {e}")
+        # Return a default list of common regions if we can't get the complete list
+        return [
+            'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
+            'ca-central-1', 'eu-west-1', 'eu-west-2', 'eu-central-1',
+            'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1', 'ap-south-1'
+        ]
+
+def is_valid_region(region_name):
+    """
+    Check if a region name is valid
+    
+    Args:
+        region_name (str): The region name to check
+        
+    Returns:
+        bool: True if valid, False otherwise
+    """
+    all_regions = get_all_regions()
+    return region_name in all_regions
 
 def get_security_group_names(security_group_ids, region):
     """
@@ -188,6 +231,7 @@ def get_classic_load_balancers(region):
             
             # Add load balancer data to the list
             elb_data.append({
+                'Region': region,
                 'Name': lb.get('LoadBalancerName', ''),
                 'DNS Name': lb.get('DNSName', ''),
                 'VPC ID': lb.get('VPCId', 'N/A'),
@@ -247,6 +291,7 @@ def get_application_network_load_balancers(region):
             
             # Add load balancer data to the list
             elb_data.append({
+                'Region': region,
                 'Name': lb.get('LoadBalancerName', ''),
                 'DNS Name': lb.get('DNSName', ''),
                 'VPC ID': lb.get('VpcId', 'N/A'),
@@ -269,12 +314,30 @@ def main():
     account_name = print_title_screen()
     
     # Check for required dependencies
-    check_dependencies()
+    if not check_dependencies():
+        sys.exit(1)
     
-    # Get list of all regions
-    print("\nGetting list of AWS regions...")
-    regions = get_all_regions()
-    print(f"Found {len(regions)} regions.")
+    # Get region preference from user
+    print("\nWould you like the information for all regions or a specific region?")
+    region_choice = input("If all, write \"all\", or if a specific region, write the region's name (ex. us-east-1): ").lower()
+    
+    # Determine regions to scan
+    if region_choice == "all":
+        print("\nRetrieving all AWS regions...")
+        regions = get_all_regions()
+        region_suffix = ""
+        print(f"Found {len(regions)} regions to scan.")
+    else:
+        if not is_valid_region(region_choice):
+            print(f"Warning: '{region_choice}' is not a valid AWS region. Please check the region name.")
+            print("Available regions:")
+            for region in get_all_regions():
+                print(f"  {region}")
+            sys.exit(1)
+            
+        regions = [region_choice]
+        region_suffix = f"-{region_choice}"
+        print(f"\nScanning only the {region_choice} region.")
     
     # Initialize a list to store all ELB data
     all_elb_data = []
@@ -303,25 +366,35 @@ def main():
     # Convert to DataFrame
     df = pd.DataFrame(all_elb_data)
     
-    # Sort by Type and Name
-    df = df.sort_values(by=['Type', 'Name'])
+    # Sort by Region, Type, and Name
+    df = df.sort_values(by=['Region', 'Type', 'Name'])
     
     # Generate filename with current date
     current_date = datetime.datetime.now().strftime('%m.%d.%Y')
     
-    # Get output directory path and ensure it exists
-    output_dir = Path(__file__).parent.parent / "output"
-    output_dir.mkdir(exist_ok=True)
+    # Use utils to create filename and ensure output directory exists
+    filename = utils.create_export_filename(
+        account_name, 
+        "elb", 
+        region_suffix, 
+        current_date
+    )
     
-    # Create the full output path
-    filename = output_dir / f"{account_name}-elb-inventory-export-{current_date}.xlsx"
+    # Export to Excel using utils
+    output_path = utils.save_dataframe_to_excel(df, filename)
     
-    # Export to Excel
-    print(f"\nExporting data to {filename}...")
-    df.to_excel(filename, index=False)
-    
-    print(f"\nExport complete! File saved as: {filename}")
-    print(f"Found a total of {len(all_elb_data)} Elastic Load Balancers across all regions.")
+    if output_path:
+        print(f"\nExport complete! File saved as: {output_path}")
+        print(f"Found a total of {len(all_elb_data)} Elastic Load Balancers.")
+    else:
+        print("\nError: Failed to save the Excel file.")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\nAn unexpected error occurred: {e}")
+        sys.exit(1)

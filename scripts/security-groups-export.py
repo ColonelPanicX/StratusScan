@@ -6,7 +6,7 @@
 ===========================
 
 Title: AWS Security Groups Export Script
-Version: v1.1.0
+Version: v1.3.2
 Date: MAR-03-2025
 
 Description:
@@ -302,8 +302,21 @@ def get_security_group_rules(region):
         # Get all security groups
         response = ec2_client.describe_security_groups()
         
-        # Counter for generating unique rule IDs
-        rule_counter = 0
+        # First, get all security group rules in this region to have the actual rule IDs
+        try:
+            all_rules_response = ec2_client.describe_security_group_rules()
+            all_rules = all_rules_response.get('SecurityGroupRules', [])
+        except Exception as e:
+            print(f"Warning: Could not retrieve security group rules in {region}: {e}")
+            all_rules = []
+        
+        # Create a map of security group rules for faster lookup
+        rules_map = {}
+        for rule in all_rules:
+            sg_id = rule.get('GroupId', '')
+            if sg_id not in rules_map:
+                rules_map[sg_id] = []
+            rules_map[sg_id].append(rule)
         
         for sg in response.get('SecurityGroups', []):
             sg_id = sg['GroupId']
@@ -328,10 +341,19 @@ def get_security_group_rules(region):
                 
                 # Process IPv4 ranges
                 for ip_range in permission.get('IpRanges', []):
-                    rule_counter += 1
-                    rule_id = f"R{rule_counter}"
-                    rule_desc = ip_range.get('Description', '')
+                    # Find matching rule in the rules map
+                    rule_id = sg_id  # Default to using the security group ID
+                    if sg_id in rules_map:
+                        for rule in rules_map[sg_id]:
+                            if (rule.get('IpProtocol') == protocol and
+                                rule.get('FromPort', None) == from_port and
+                                rule.get('ToPort', None) == to_port and
+                                rule.get('CidrIpv4', '') == ip_range.get('CidrIp', '') and
+                                not rule.get('IsEgress', True)):
+                                rule_id = rule.get('SecurityGroupRuleId', sg_id)
+                                break
                     
+                    rule_desc = ip_range.get('Description', '')
                     rule_text = format_ip_range(ip_range, protocol, from_port, to_port, is_inbound=True)
                     
                     security_group_rules.append({
@@ -353,10 +375,19 @@ def get_security_group_rules(region):
                 
                 # Process IPv6 ranges
                 for ip_range in permission.get('Ipv6Ranges', []):
-                    rule_counter += 1
-                    rule_id = f"R{rule_counter}"
-                    rule_desc = ip_range.get('Description', '')
+                    # Find matching rule in the rules map
+                    rule_id = sg_id  # Default to using the security group ID
+                    if sg_id in rules_map:
+                        for rule in rules_map[sg_id]:
+                            if (rule.get('IpProtocol') == protocol and
+                                rule.get('FromPort', None) == from_port and
+                                rule.get('ToPort', None) == to_port and
+                                rule.get('CidrIpv6', '') == ip_range.get('CidrIpv6', '') and
+                                not rule.get('IsEgress', True)):
+                                rule_id = rule.get('SecurityGroupRuleId', sg_id)
+                                break
                     
+                    rule_desc = ip_range.get('Description', '')
                     rule_text = format_ip_range(ip_range, protocol, from_port, to_port, is_inbound=True)
                     
                     security_group_rules.append({
@@ -378,10 +409,21 @@ def get_security_group_rules(region):
                 
                 # Process security group references
                 for sg_ref in permission.get('UserIdGroupPairs', []):
-                    rule_counter += 1
-                    rule_id = f"R{rule_counter}"
-                    rule_desc = sg_ref.get('Description', '')
+                    # Find matching rule in the rules map
+                    rule_id = sg_id  # Default to using the security group ID
+                    ref_group_id = sg_ref.get('GroupId', '')
+                    if sg_id in rules_map:
+                        for rule in rules_map[sg_id]:
+                            referenced_group = rule.get('ReferencedGroupInfo', {}).get('GroupId', '')
+                            if (rule.get('IpProtocol') == protocol and
+                                rule.get('FromPort', None) == from_port and
+                                rule.get('ToPort', None) == to_port and
+                                referenced_group == ref_group_id and
+                                not rule.get('IsEgress', True)):
+                                rule_id = rule.get('SecurityGroupRuleId', sg_id)
+                                break
                     
+                    rule_desc = sg_ref.get('Description', '')
                     rule_text = format_security_group_reference(sg_ref, protocol, from_port, to_port, is_inbound=True)
                     
                     security_group_rules.append({
@@ -409,10 +451,19 @@ def get_security_group_rules(region):
                 
                 # Process IPv4 ranges
                 for ip_range in permission.get('IpRanges', []):
-                    rule_counter += 1
-                    rule_id = f"R{rule_counter}"
-                    rule_desc = ip_range.get('Description', '')
+                    # Find matching rule in the rules map
+                    rule_id = sg_id  # Default to using the security group ID
+                    if sg_id in rules_map:
+                        for rule in rules_map[sg_id]:
+                            if (rule.get('IpProtocol') == protocol and
+                                rule.get('FromPort', None) == from_port and
+                                rule.get('ToPort', None) == to_port and
+                                rule.get('CidrIpv4', '') == ip_range.get('CidrIp', '') and
+                                rule.get('IsEgress', False)):
+                                rule_id = rule.get('SecurityGroupRuleId', sg_id)
+                                break
                     
+                    rule_desc = ip_range.get('Description', '')
                     rule_text = format_ip_range(ip_range, protocol, from_port, to_port, is_inbound=False)
                     
                     security_group_rules.append({
@@ -434,10 +485,19 @@ def get_security_group_rules(region):
                 
                 # Process IPv6 ranges
                 for ip_range in permission.get('Ipv6Ranges', []):
-                    rule_counter += 1
-                    rule_id = f"R{rule_counter}"
-                    rule_desc = ip_range.get('Description', '')
+                    # Find matching rule in the rules map
+                    rule_id = sg_id  # Default to using the security group ID
+                    if sg_id in rules_map:
+                        for rule in rules_map[sg_id]:
+                            if (rule.get('IpProtocol') == protocol and
+                                rule.get('FromPort', None) == from_port and
+                                rule.get('ToPort', None) == to_port and
+                                rule.get('CidrIpv6', '') == ip_range.get('CidrIpv6', '') and
+                                rule.get('IsEgress', False)):
+                                rule_id = rule.get('SecurityGroupRuleId', sg_id)
+                                break
                     
+                    rule_desc = ip_range.get('Description', '')
                     rule_text = format_ip_range(ip_range, protocol, from_port, to_port, is_inbound=False)
                     
                     security_group_rules.append({
@@ -459,10 +519,21 @@ def get_security_group_rules(region):
                 
                 # Process security group references
                 for sg_ref in permission.get('UserIdGroupPairs', []):
-                    rule_counter += 1
-                    rule_id = f"R{rule_counter}"
-                    rule_desc = sg_ref.get('Description', '')
+                    # Find matching rule in the rules map
+                    rule_id = sg_id  # Default to using the security group ID
+                    ref_group_id = sg_ref.get('GroupId', '')
+                    if sg_id in rules_map:
+                        for rule in rules_map[sg_id]:
+                            referenced_group = rule.get('ReferencedGroupInfo', {}).get('GroupId', '')
+                            if (rule.get('IpProtocol') == protocol and
+                                rule.get('FromPort', None) == from_port and
+                                rule.get('ToPort', None) == to_port and
+                                referenced_group == ref_group_id and
+                                rule.get('IsEgress', False)):
+                                rule_id = rule.get('SecurityGroupRuleId', sg_id)
+                                break
                     
+                    rule_desc = sg_ref.get('Description', '')
                     rule_text = format_security_group_reference(sg_ref, protocol, from_port, to_port, is_inbound=False)
                     
                     security_group_rules.append({
@@ -484,11 +555,8 @@ def get_security_group_rules(region):
             
             # If no rules found, add a placeholder entry
             if not sg.get('IpPermissions', []) and not sg.get('IpPermissionsEgress', []):
-                rule_counter += 1
-                rule_id = f"R{rule_counter}"
-                
                 security_group_rules.append({
-                    'Rule ID': rule_id,
+                    'Rule ID': sg_id,
                     'SG Name': sg_name,
                     'SG ID': sg_id,
                     'VPC': vpc_name,
@@ -561,19 +629,36 @@ def main():
     
     # Get all AWS regions
     print("\nGetting list of AWS regions...")
-    regions = get_all_regions()
-    print(f"Found {len(regions)} regions.")
+    all_regions = get_all_regions()
+    print(f"Found {len(all_regions)} regions.")
     
-    # Collect security group rules from all regions
+    # Ask user if they want to process all regions or a specific one
+    print("\nWould you like the information for all regions or a specific region?")
+    print("If all, write \"all\", or if a specific region, write the region's name (ex. us-east-1): ")
+    region_choice = input().strip().lower()
+    
+    # Determine which regions to process
+    if region_choice == "all":
+        regions = all_regions
+        print(f"\nProcessing all {len(regions)} regions...")
+    else:
+        # Validate the provided region
+        if region_choice in all_regions:
+            regions = [region_choice]
+            print(f"\nProcessing region: {region_choice}")
+        else:
+            print(f"Warning: '{region_choice}' does not appear to be a valid region. Defaulting to all regions.")
+            regions = all_regions
+            print(f"\nProcessing all {len(regions)} regions...")
+    
+    # Collect security group rules from selected regions
     all_security_group_rules = []
     total_regions = len(regions)
     
-    print("\nCollecting security group rules across all regions...")
     print("This may take some time depending on the number of regions and security groups.")
     
     for i, region in enumerate(regions, 1):
-        progress = (i / total_regions) * 100
-        print(f"[{progress:.1f}%] Processing region: {region} ({i}/{total_regions})")
+        print(f"Processing region: {region} ({i}/{total_regions})")
         
         # Get security group rules from this region
         region_rules = get_security_group_rules(region)

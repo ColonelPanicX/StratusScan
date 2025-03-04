@@ -352,12 +352,13 @@ def convert_to_mb(size_in_bytes):
     except (ValueError, TypeError):
         return "0"
 
-def get_s3_buckets_info(use_storage_lens=False):
+def get_s3_buckets_info(use_storage_lens=False, target_region=None):
     """
-    Collect information about all S3 buckets across all regions
+    Collect information about S3 buckets across all regions or a specific region
     
     Args:
         use_storage_lens (bool): Whether to try using Storage Lens for size metrics
+        target_region (str): Specific region to target or None for all regions
         
     Returns:
         list: List of dictionaries containing bucket information
@@ -379,18 +380,38 @@ def get_s3_buckets_info(use_storage_lens=False):
         # Get the list of all buckets
         response = s3_client.list_buckets()
         
-        total_buckets = len(response['Buckets'])
-        print(f"\nFound {total_buckets} S3 buckets. Gathering details for each bucket...")
+        # Filter the buckets based on the target region
+        buckets_to_process = []
+        for bucket in response['Buckets']:
+            bucket_name = bucket['Name']
+            
+            # Get the bucket's region if we need to filter
+            if target_region:
+                region = get_bucket_region(bucket_name)
+                
+                # Only include buckets in the specified region
+                if region == target_region:
+                    buckets_to_process.append(bucket)
+            else:
+                buckets_to_process.append(bucket)
+                
+        total_buckets = len(buckets_to_process)
+        print(f"\nFound {total_buckets} S3 buckets" + 
+              (f" in region {target_region}" if target_region else " across all regions") + 
+              ". Gathering details for each bucket...")
         
         # Process each bucket
-        for i, bucket in enumerate(response['Buckets'], 1):
+        for i, bucket in enumerate(buckets_to_process, 1):
             bucket_name = bucket['Name']
             creation_date = bucket['CreationDate']
             
             print(f"Processing bucket {i}/{total_buckets}: {bucket_name}")
             
-            # Get the bucket's region
-            region = get_bucket_region(bucket_name)
+            # Get the bucket's region if we haven't already
+            if target_region:
+                region = target_region
+            else:
+                region = get_bucket_region(bucket_name)
             
             # Initialize size and object count
             size_bytes = 0
@@ -426,13 +447,14 @@ def get_s3_buckets_info(use_storage_lens=False):
     
     return all_buckets_info
 
-def export_to_excel(buckets_info, account_name):
+def export_to_excel(buckets_info, account_name, target_region=None):
     """
     Export bucket information to an Excel file
     
     Args:
         buckets_info (list): List of dictionaries with bucket information
         account_name (str): Name of the AWS account for file naming
+        target_region (str): Specific region being targeted (or None for all)
         
     Returns:
         str: Path to the created file
@@ -465,8 +487,9 @@ def export_to_excel(buckets_info, account_name):
     output_dir = Path(__file__).parent.parent / "output"
     output_dir.mkdir(exist_ok=True)
     
-    # Create the full output path
-    filename = output_dir / f"{account_name}-s3-buckets-inventory-{current_date}.xlsx"
+    # Create the full output path with region indicator if applicable
+    region_suffix = f"-{target_region}" if target_region else ""
+    filename = output_dir / f"{account_name}-s3-buckets-inventory{region_suffix}-{current_date}.xlsx"
     
     # Create Excel writer
     writer = pd.ExcelWriter(filename, engine='openpyxl')
@@ -480,13 +503,14 @@ def export_to_excel(buckets_info, account_name):
     print(f"\nData successfully exported to: {filename}")
     return filename
 
-def export_to_csv(buckets_info, account_name):
+def export_to_csv(buckets_info, account_name, target_region=None):
     """
     Export bucket information to a CSV file
     
     Args:
         buckets_info (list): List of dictionaries with bucket information
         account_name (str): Name of the AWS account for file naming
+        target_region (str): Specific region being targeted (or None for all)
         
     Returns:
         str: Path to the created file
@@ -519,8 +543,9 @@ def export_to_csv(buckets_info, account_name):
     output_dir = Path(__file__).parent.parent / "output"
     output_dir.mkdir(exist_ok=True)
     
-    # Create the full output path
-    filename = output_dir / f"{account_name}-s3-buckets-inventory-{current_date}.csv"
+    # Create the full output path with region indicator if applicable
+    region_suffix = f"-{target_region}" if target_region else ""
+    filename = output_dir / f"{account_name}-s3-buckets-inventory{region_suffix}-{current_date}.csv"
     
     # Write data to CSV
     df.to_csv(filename, index=False)
@@ -549,27 +574,43 @@ def main():
     # Parse arguments
     args = parser.parse_args()
     
+    # Prompt user for region selection
+    print("\nWould you like the information for all regions or a specific region?")
+    region_input = input("If all, write \"all\", or if a specific region, write the region's name (ex. us-east-1): ")
+    
+    # Set target_region based on user input
+    target_region = None if region_input.lower() == 'all' else region_input
+    
+    # Validate region if a specific one was provided
+    if target_region:
+        all_regions = get_all_regions()
+        if target_region not in all_regions:
+            print(f"Warning: '{target_region}' may not be a valid AWS region. Proceeding anyway...")
+    
     print("\nChecking for S3 Storage Lens availability...")
     use_storage_lens = check_storage_lens_availability()
     
-    print("\nCollecting S3 bucket information across all regions...")
+    print(f"\nCollecting S3 bucket information" + 
+          (f" for region: {target_region}" if target_region else " across all regions") + 
+          "...")
     print("This may take some time depending on the number of buckets...")
     
-    # Get information about all S3 buckets
-    buckets_info = get_s3_buckets_info(use_storage_lens=use_storage_lens)
+    # Get information about S3 buckets
+    buckets_info = get_s3_buckets_info(use_storage_lens=use_storage_lens, target_region=target_region)
     
     # Check if we found any buckets
     if not buckets_info:
         print("\nNo S3 buckets found or unable to retrieve bucket information.")
         return
     
-    print(f"\nFound {len(buckets_info)} S3 buckets in total.")
+    print(f"\nFound {len(buckets_info)} S3 buckets" + 
+          (f" in region {target_region}." if target_region else " across all regions."))
     
     # Export the data to the selected format
     if args.format == 'xlsx':
-        export_to_excel(buckets_info, account_name)
+        export_to_excel(buckets_info, account_name, target_region)
     else:
-        export_to_csv(buckets_info, account_name)
+        export_to_csv(buckets_info, account_name, target_region)
     
     print("\nScript execution completed successfully.")
 

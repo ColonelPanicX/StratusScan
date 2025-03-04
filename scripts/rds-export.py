@@ -7,8 +7,8 @@
 ===========================
 
 Title: AWS RDS Instance Export Script
-Version: v1.1.1
-Date: FEB-28-2025
+Version: v1.2.0
+Date: MAR-04-2025
 
 Description: 
 This script exports a list of all RDS instances across all AWS 
@@ -58,7 +58,7 @@ def print_title():
     print("====================================================================")
     print("                  AWS RESOURCE SCANNER                              ")
     print("====================================================================")
-    print("AWS RDS INSTANCE EXPORT SCRIPT v1.1.1")
+    print("AWS RDS INSTANCE EXPORT SCRIPT v1.2.0")
     print("====================================================================")
     
     # Get the current AWS account ID
@@ -157,6 +157,19 @@ def get_all_regions():
             'ap-northeast-2', 'ap-northeast-3', 'ap-southeast-1',
             'ap-southeast-2', 'ap-south-1', 'sa-east-1'
         ]
+
+def is_valid_region(region_name):
+    """
+    Check if a region name is valid
+    
+    Args:
+        region_name (str): AWS region name to validate
+        
+    Returns:
+        bool: True if valid, False otherwise
+    """
+    all_regions = get_all_regions()
+    return region_name in all_regions
 
 def get_security_group_info(rds_client, sg_ids):
     """
@@ -334,32 +347,28 @@ def get_rds_instances(region):
         return rds_instances
     except botocore.exceptions.ClientError as e:
         if e.response['Error']['Code'] == 'AccessDenied':
-            print(f"Access denied in region {region}. Skipping...")
+            print(f"  Access denied in region {region}. Skipping...")
         elif e.response['Error']['Code'] == 'AuthFailure':
-            print(f"Authentication failure in region {region}. Skipping...")
+            print(f"  Authentication failure in region {region}. Skipping...")
         else:
-            print(f"Error in region {region}: {e}")
+            print(f"  Error in region {region}: {e}")
         return []
     except Exception as e:
-        print(f"Error accessing region {region}: {e}")
+        print(f"  Error accessing region {region}: {e}")
         return []
 
-def export_to_excel(data, account_name):
+def export_to_excel(data, account_name, region_filter=None):
     """
     Export RDS instance data to an Excel file.
     
     Args:
         data (list): List of dictionaries containing RDS instance information
         account_name (str): Name of the AWS account
+        region_filter (str, optional): Region filter to include in filename
         
     Returns:
         str: Path to the exported file
     """
-    # Helper function to make datetime objects timezone unaware
-    def remove_timezone(obj):
-        if isinstance(obj, datetime.datetime) and obj.tzinfo is not None:
-            return obj.replace(tzinfo=None)
-        return obj
     if not data:
         print("No RDS instances found to export.")
         return None
@@ -382,47 +391,63 @@ def export_to_excel(data, account_name):
         # Convert processed data to DataFrame
         df = pd.DataFrame(processed_data)
         
-        # Define output file name with date
+        # Define output file name with date and optional region filter
         today = datetime.datetime.now().strftime("%m.%d.%Y")
+        region_suffix = f"-{region_filter}" if region_filter else ""
         
-        # Create output directory if it doesn't exist
-        output_dir = Path(__file__).parent.parent / "output"
-        output_dir.mkdir(exist_ok=True)
+        # Use the utility function for consistent file naming
+        filename = utils.create_export_filename(
+            account_name, 
+            "rds-instances", 
+            region_suffix, 
+            today
+        )
         
-        # Create full output path
-        output_file = output_dir / f"{account_name}-rds-instances-export-{today}.xlsx"
+        # Get the full output path
+        output_file = utils.get_output_filepath(filename)
         
-        # Create Excel writer
-        writer = pd.ExcelWriter(output_file, engine='openpyxl')
+        # Save using utils function
+        saved_file = utils.save_dataframe_to_excel(df, filename, sheet_name='RDS Instances')
         
-        # Write data to Excel
-        df.to_excel(writer, sheet_name='RDS Instances', index=False)
-        
-        # Auto-adjust column widths
-        worksheet = writer.sheets['RDS Instances']
-        for i, column in enumerate(df.columns):
-            column_width = max(df[column].astype(str).map(len).max(), len(column)) + 2
-            # Set a maximum column width to avoid extremely wide columns
-            column_width = min(column_width, 50)
-            # openpyxl column indices are 1-based
-            worksheet.column_dimensions[chr(65 + i if i < 26 else 64 + i//26 + 1)].width = column_width
-        
-        # Save the Excel file
-        writer.close()
-        
-        print(f"\nExport completed successfully!")
-        print(f"File saved as: {os.path.abspath(output_file)}")
-        
-        return output_file
+        if saved_file:
+            print(f"\nExport completed successfully!")
+            print(f"File saved as: {saved_file}")
+            return saved_file
+        else:
+            print("Failed to save using utils.save_dataframe_to_excel(), falling back to direct save.")
+            
+            # Create Excel writer as fallback
+            writer = pd.ExcelWriter(output_file, engine='openpyxl')
+            
+            # Write data to Excel
+            df.to_excel(writer, sheet_name='RDS Instances', index=False)
+            
+            # Auto-adjust column widths
+            worksheet = writer.sheets['RDS Instances']
+            for i, column in enumerate(df.columns):
+                column_width = max(df[column].astype(str).map(len).max(), len(column)) + 2
+                # Set a maximum column width to avoid extremely wide columns
+                column_width = min(column_width, 50)
+                # openpyxl column indices are 1-based
+                worksheet.column_dimensions[chr(65 + i if i < 26 else 64 + i//26 + 1)].width = column_width
+            
+            # Save the Excel file
+            writer.close()
+            
+            print(f"\nExport completed successfully!")
+            print(f"File saved as: {os.path.abspath(output_file)}")
+            
+            return str(output_file)
+            
     except Exception as e:
         print(f"Error exporting data: {e}")
         
         # Fallback to CSV if Excel export fails
         try:
-            csv_file = output_dir / f"{account_name}-rds-instances-export-{datetime.datetime.now().strftime('%m.%d.%Y')}.csv"
+            csv_file = utils.get_output_filepath(f"{account_name}-rds-instances{region_suffix}-export-{today}.csv")
             pd.DataFrame(data).to_csv(csv_file, index=False)
             print(f"Exported to CSV instead: {os.path.abspath(csv_file)}")
-            return csv_file
+            return str(csv_file)
         except Exception as csv_error:
             print(f"CSV export also failed: {csv_error}")
             return None
@@ -437,38 +462,53 @@ def main():
     # Check and install dependencies
     check_and_install_dependencies()
     
-    # Get all available regions
-    print("\nGetting list of AWS regions...")
-    regions = get_all_regions()
-    print(f"Found {len(regions)} regions.")
+    # Get user input for region selection
+    print("\nWould you like the information for all regions or a specific region?")
+    region_choice = input("If all, write \"all\", or if a specific region, write the region's name (ex. us-east-1): ").strip().lower()
+    
+    # Get all available regions for validation
+    all_regions = get_all_regions()
+    
+    # Determine which regions to scan
+    if region_choice == "all":
+        regions_to_scan = all_regions
+        region_filter = None
+    else:
+        # Validate the region name
+        if not is_valid_region(region_choice):
+            print(f"Warning: '{region_choice}' is not a valid AWS region. Please check your input.")
+            print("Defaulting to scanning all regions.")
+            regions_to_scan = all_regions
+            region_filter = None
+        else:
+            regions_to_scan = [region_choice]
+            region_filter = region_choice
     
     # Initialize data collection
     all_rds_instances = []
-    processed_regions = 0
-    total_regions = len(regions)
     
-    print("\nCollecting RDS instance data across all regions...")
+    print(f"\nCollecting RDS instance data across {len(regions_to_scan)} region(s)...")
     
-    # Process each region
-    for region in regions:
-        processed_regions += 1
-        progress = (processed_regions / total_regions) * 100
-        sys.stdout.write(f"\rProgress: {progress:.1f}% - Processing region: {region} ({processed_regions}/{total_regions})")
-        sys.stdout.flush()
+    # Process each region with the new output format
+    for region in regions_to_scan:
+        print(f"Searching for RDS instances in region: {region}")
         
         # Get RDS instances in the region
         region_instances = get_rds_instances(region)
+        
+        # Add to the total collection
         all_rds_instances.extend(region_instances)
-    
-    sys.stdout.write("\n")
+        
+        # Display count for this region
+        print(f"  Found {len(region_instances)} RDS instances")
     
     # Export results
-    print(f"\nFound {len(all_rds_instances)} RDS instances across {len(regions)} regions.")
+    print(f"\nFound {len(all_rds_instances)} RDS instances in total.")
     
     if all_rds_instances:
-        output_file = export_to_excel(all_rds_instances, account_name)
+        output_file = export_to_excel(all_rds_instances, account_name, region_filter)
         if output_file:
-            print("\nExport complete! You can find the exported file in the current directory.")
+            print("\nExport complete! You can find the exported file in the output directory.")
             print(f"File path: {os.path.abspath(output_file)}")
     else:
         print("No RDS instances found. No file exported.")

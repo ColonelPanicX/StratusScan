@@ -413,7 +413,7 @@ def main():
         
         # Get region preference
         print("\nWould you like the information for all regions or a specific region?")
-        region_choice = input("If all, write \"all\", and if a specific region, write the region's name (ex. us-east-1): ").lower()
+        region_choice = input("If all, write \"all\", or if a specific region, write the region's name (ex. us-east-1): ").lower()
         
         if region_choice != "all":
             if not is_valid_region(region_choice):
