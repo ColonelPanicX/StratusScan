@@ -6,13 +6,14 @@
 ===========================
 
 Title: AWS Account Billing Data Export
-Version: v1.1.0
-Date: MAR-03-2025
+Version: v1.3.0
+Date: MAR-04-2025
 
 Description:
-Exports AWS billing data for specified time periods (monthly or yearly), 
+Exports AWS billing data for specified time periods (monthly or last 12 months), 
 organized by service and associated cost. Handles AWS Cost Explorer
-limitations for historical data access.
+limitations for historical data access and provides alternatives
+for accessing older billing data.
 """
 
 import os
@@ -83,12 +84,6 @@ def check_dependencies():
     
     return True
 
-# Now import the modules (after dependencies check in main())
-import pandas as pd
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill
-from openpyxl.utils import get_column_letter
-
 def print_title():
     """
     Print the script title banner and get account info.
@@ -101,7 +96,7 @@ def print_title():
     print("====================================================================")
     print("AWS ACCOUNT BILLING DATA EXPORT TOOL")
     print("====================================================================")
-    print("Version: v1.1.0                                 Date: MAR-03-2025")
+    print("Version: v1.3.0                                 Date: MAR-04-2025")
     print("====================================================================")
     
     # Get the current AWS account ID
@@ -125,7 +120,7 @@ def print_title():
 
 def validate_date_input(date_input):
     """
-    Validate user input for year or month-year.
+    Validate user input for last 12 months or month-year.
     
     Args:
         date_input (str): User input string
@@ -133,16 +128,16 @@ def validate_date_input(date_input):
     Returns:
         tuple: (is_valid, is_year_only, start_date, end_date)
     """
-    # Define regex patterns for year and month-year formats
-    year_pattern = r'^\d{4}$'  # YYYY
+    # Define regex patterns
     month_year_pattern = r'^(0[1-9]|1[0-2])-\d{4}$'  # MM-YYYY
+    last_12_pattern = r'^last\s*12$'  # "last 12" with flexible spacing
     
-    if re.match(year_pattern, date_input):
-        # Year format (YYYY)
-        year = int(date_input)
-        start_date = datetime.datetime(year, 1, 1)
-        end_date = datetime.datetime(year, 12, 31)
-        return True, True, start_date, end_date
+    if re.match(last_12_pattern, date_input.lower()):
+        # Last 12 months
+        today = datetime.datetime.now()
+        end_date = datetime.datetime(today.year, today.month, 1) - datetime.timedelta(days=1)  # Last day of previous month
+        start_date = datetime.datetime(end_date.year - 1, end_date.month, 1)  # 12 months before start of previous month
+        return True, False, start_date, end_date
     
     elif re.match(month_year_pattern, date_input):
         # Month-Year format (MM-YYYY)
@@ -162,6 +157,32 @@ def validate_date_input(date_input):
     else:
         return False, None, None, None
 
+def check_cost_explorer_data_retention():
+    """
+    Check if extended data retention is enabled for Cost Explorer.
+    
+    Returns:
+        tuple: (has_extended_retention, max_months)
+    """
+    try:
+        # Create a Cost Explorer client
+        ce_client = boto3.client('ce')
+        
+        # Get Cost Explorer preferences
+        response = ce_client.get_preference('COST_EXPLORER')
+        
+        # Check if extended data retention is enabled
+        if 'retentionPeriod' in response:
+            retention_period = response['retentionPeriod']
+            if retention_period.get('retention') == 'LIFETIME':
+                return True, 28  # 14 (standard) + 14 (extended)
+            
+        # Default retention if not explicitly set
+        return False, 14
+    except Exception:
+        # If we can't determine, assume standard retention
+        return False, 14
+
 def validate_date_range(start_date, end_date):
     """
     Validate the date range against AWS Cost Explorer limitations.
@@ -171,29 +192,38 @@ def validate_date_range(start_date, end_date):
         end_date (datetime): End date
         
     Returns:
-        tuple: (is_valid, message)
+        tuple: (is_valid, message, retention_months)
     """
     today = datetime.datetime.now()
     
     # Cost Explorer data is available the next day
     latest_available_date = today - datetime.timedelta(days=1)
     
-    # By default, Cost Explorer can go back 14 months (~426 days)
-    earliest_available_date = today - datetime.timedelta(days=426)  
+    # Check if extended data retention is enabled
+    has_extended_retention, retention_months = check_cost_explorer_data_retention()
+    
+    # Calculate earliest available date based on retention period
+    earliest_available_date = today - datetime.timedelta(days=retention_months * 30)
     
     # Check if end date is in the future
     if end_date > latest_available_date:
         end_date_str = end_date.strftime('%Y-%m-%d')
         latest_date_str = latest_available_date.strftime('%Y-%m-%d')
-        return False, f"End date ({end_date_str}) is in the future. Latest available data is for {latest_date_str}."
+        return False, f"End date ({end_date_str}) is in the future. Latest available data is for {latest_date_str}.", retention_months
     
     # Check if start date is too far in the past
     if start_date < earliest_available_date:
         start_date_str = start_date.strftime('%Y-%m-%d')
         earliest_date_str = earliest_available_date.strftime('%Y-%m-%d')
-        return False, f"Start date ({start_date_str}) is too far in the past. AWS Cost Explorer only provides data for the last 14 months by default (from {earliest_date_str})."
+        retention_text = f"{retention_months} months"
+        if has_extended_retention:
+            retention_text += " (with extended retention enabled)"
+        else:
+            retention_text += " (standard retention)"
+        
+        return False, f"Start date ({start_date_str}) is too far in the past. AWS Cost Explorer only provides data for {retention_text}, available from {earliest_date_str}.", retention_months
     
-    return True, "Date range is valid."
+    return True, "Date range is valid.", retention_months
 
 def get_billing_data(start_date, end_date):
     """
@@ -261,8 +291,13 @@ def get_billing_data(start_date, end_date):
         if error_code == 'ValidationException' and 'historical data' in error_message:
             print("\nError: AWS Cost Explorer cannot access historical data beyond the default 14 months.")
             print("This is a limitation of AWS Cost Explorer. To access older data:")
-            print("1. You need to enable longer data retention in Cost Explorer settings")
-            print("2. Or choose a more recent date range")
+            print("1. Enable extended data retention in Cost Explorer settings (up to 14 additional months)")
+            print("   - Sign in to AWS Management Console")
+            print("   - Go to AWS Cost Management > Cost Explorer > Settings")
+            print("   - Under 'Data retention', enable 'Extended retention'")
+            print("2. For data older than 28 months, set up AWS Cost and Usage Reports (CUR)")
+            print("   - Go to AWS Cost Management > Cost & Usage Reports")
+            print("   - Set up a report to be delivered to an S3 bucket")
             sys.exit(1)
         else:
             print(f"\nError accessing Cost Explorer: {error_message}")
@@ -280,6 +315,12 @@ def create_excel_report(billing_data, account_name, date_suffix):
     Returns:
         str: Path to the created Excel file
     """
+    # Import required modules here
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+    import pandas as pd
+    
     # Create a new workbook
     wb = Workbook()
     
@@ -293,6 +334,20 @@ def create_excel_report(billing_data, account_name, date_suffix):
     
     # Sort months chronologically
     sorted_months = sorted(billing_data.keys())
+    
+    # Create a summary sheet
+    summary_sheet = wb.create_sheet("Summary")
+    summary_sheet['A1'] = 'Month'
+    summary_sheet['B1'] = 'Total Cost (USD)'
+    
+    # Apply header styles to summary sheet
+    summary_sheet['A1'].font = header_font
+    summary_sheet['B1'].font = header_font
+    summary_sheet['A1'].fill = header_fill
+    summary_sheet['B1'].fill = header_fill
+    
+    summary_row = 2
+    total_all_months = 0
     
     # Process each month
     for month in sorted_months:
@@ -344,6 +399,31 @@ def create_excel_report(billing_data, account_name, date_suffix):
                     max_length = max(max_length, len(str(cell.value)))
             adjusted_width = max_length + 2
             ws.column_dimensions[column_letter].width = adjusted_width
+        
+        # Add entry to summary sheet
+        display_month = datetime.datetime.strptime(month, '%Y-%m').strftime('%B %Y')
+        summary_sheet[f'A{summary_row}'] = display_month
+        summary_sheet[f'B{summary_row}'] = total_cost
+        summary_sheet[f'B{summary_row}'].number_format = '$#,##0.00'
+        summary_row += 1
+        total_all_months += total_cost
+    
+    # Add total row to summary
+    summary_sheet[f'A{summary_row}'] = 'Total All Months'
+    summary_sheet[f'B{summary_row}'] = total_all_months
+    summary_sheet[f'A{summary_row}'].font = header_font
+    summary_sheet[f'B{summary_row}'].font = header_font
+    summary_sheet[f'B{summary_row}'].number_format = '$#,##0.00'
+    
+    # Adjust summary sheet column widths
+    for col in range(1, 3):
+        column_letter = get_column_letter(col)
+        max_length = 0
+        for cell in summary_sheet[column_letter]:
+            if cell.value:
+                max_length = max(max_length, len(str(cell.value)))
+        adjusted_width = max_length + 2
+        summary_sheet.column_dimensions[column_letter].width = adjusted_width
     
     # Generate filename using utils
     filename = utils.create_export_filename(
@@ -376,49 +456,34 @@ def main():
         # Check dependencies
         if not check_dependencies():
             sys.exit(1)
-            
-        # Now import pandas after ensuring it's installed
-        global pd
-        import pandas as pd
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, Alignment, PatternFill
-        from openpyxl.utils import get_column_letter
         
         # Get user input for date range
         while True:
-            date_input = input("\nIndicate a specific year (ex. \"2024\") or a specific month (ex. \"01-2025\"): ")
+            date_input = input("\nWould you like the last 12 months (type \"last 12\") or a specific month (ex. \"01-2025\")? ")
+            
             is_valid, is_year_only, start_date, end_date = validate_date_input(date_input)
             
             if is_valid:
                 # Validate date range against AWS limitations
-                date_valid, message = validate_date_range(start_date, end_date)
+                date_valid, message, _ = validate_date_range(start_date, end_date)
                 if date_valid:
                     break
                 else:
                     print(f"Error: {message}")
-                    
-                    # Offer alternative suggestion
-                    today = datetime.datetime.now()
-                    suggestion_start = today - datetime.timedelta(days=365)  # Suggest last 12 months
-                    suggestion_start = suggestion_start.replace(day=1)  # First day of that month
-                    
-                    if is_year_only:
-                        # Suggest current year
-                        suggestion = str(today.year)
-                    else:
-                        # Suggest format MM-YYYY for the last year
-                        suggestion = suggestion_start.strftime("%m-%Y")
-                    
-                    print(f"Suggestion: Try a more recent date range, like \"{suggestion}\"")
+                    print("Please try again with a more recent date range.")
             else:
-                print("Invalid input format. Please try again.")
+                print("Invalid input format. Please enter either \"last 12\" or a month in format \"MM-YYYY\" (e.g., \"01-2025\").")
         
         # Get billing data
         billing_data = get_billing_data(start_date, end_date)
         
+        if not billing_data:
+            print("\nNo billing data found for the specified period.")
+            sys.exit(0)
+        
         # Determine output file name suffix
-        if is_year_only:
-            date_suffix = start_date.strftime('%Y')
+        if date_input.lower().startswith('last'):
+            date_suffix = "last-12-months"
         else:
             date_suffix = start_date.strftime('%m-%Y')
         

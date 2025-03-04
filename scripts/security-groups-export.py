@@ -6,13 +6,14 @@
 ===========================
 
 Title: AWS Security Groups Export Script
-Version: v1.0.0
-Date: FEB-28-2025
+Version: v1.1.0
+Date: MAR-03-2025
 
 Description:
 This script exports security group information from all AWS regions
 including group name, ID, VPC, inbound rules, outbound rules, and associated resources.
-The data is exported to an Excel file with separate sheets for each region.
+Each security group rule is listed on its own line for better analysis and filtering.
+The data is exported to an Excel file with all security groups in a single sheet.
 
 """
 
@@ -159,150 +160,61 @@ def get_vpc_name(ec2_client, vpc_id):
     except Exception as e:
         return vpc_id  # Return the ID on error
 
-def format_security_rule(rule, direction):
+def format_ip_range(ip_range, protocol, from_port, to_port, is_inbound=True):
     """
-    Format a security group rule into a readable string
+    Format IP range rule details
     """
-    if direction == 'inbound':
-        # Inbound rule
-        src = rule.get('CidrIp', rule.get('CidrIpv6', ''))
-        if not src:
-            # Handle security group references
-            if 'GroupId' in rule:
-                src = f"sg:{rule['GroupId']}"
-            elif 'GroupName' in rule:
-                src = f"sg:{rule['GroupName']}"
-            else:
-                src = "Unknown"
-        
-        port_range = ''
-        if 'FromPort' in rule and 'ToPort' in rule:
-            if rule['FromPort'] == rule['ToPort']:
-                port_range = str(rule['FromPort'])
-            else:
-                port_range = f"{rule['FromPort']}-{rule['ToPort']}"
-        elif 'FromPort' in rule:
-            port_range = f"{rule['FromPort']}+"
-        elif 'ToPort' in rule:
-            port_range = f"0-{rule['ToPort']}"
+    if protocol == '-1':
+        protocol = 'All'
+    
+    # Format port range
+    port_range = ''
+    if from_port is not None and to_port is not None:
+        if from_port == to_port:
+            port_range = str(from_port)
         else:
-            port_range = 'All'
-        
-        protocol = rule.get('IpProtocol', 'All')
-        if protocol == '-1':
-            protocol = 'All'
-        
-        return f"{src} → {protocol}:{port_range}"
+            port_range = f"{from_port}-{to_port}"
     else:
-        # Outbound rule
-        dst = rule.get('CidrIp', rule.get('CidrIpv6', ''))
-        if not dst:
-            # Handle security group references
-            if 'GroupId' in rule:
-                dst = f"sg:{rule['GroupId']}"
-            elif 'GroupName' in rule:
-                dst = f"sg:{rule['GroupName']}"
-            else:
-                dst = "Unknown"
-        
-        port_range = ''
-        if 'FromPort' in rule and 'ToPort' in rule:
-            if rule['FromPort'] == rule['ToPort']:
-                port_range = str(rule['FromPort'])
-            else:
-                port_range = f"{rule['FromPort']}-{rule['ToPort']}"
-        elif 'FromPort' in rule:
-            port_range = f"{rule['FromPort']}+"
-        elif 'ToPort' in rule:
-            port_range = f"0-{rule['ToPort']}"
-        else:
-            port_range = 'All'
-        
-        protocol = rule.get('IpProtocol', 'All')
-        if protocol == '-1':
-            protocol = 'All'
-        
-        return f"{protocol}:{port_range} → {dst}"
+        port_range = 'All'
+    
+    # Format CIDR
+    cidr = ip_range.get('CidrIp', ip_range.get('CidrIpv6', 'Unknown'))
+    
+    if is_inbound:
+        return f"{cidr} → {protocol}:{port_range}"
+    else:
+        return f"{protocol}:{port_range} → {cidr}"
 
-def get_security_group_rules(sg):
+def format_security_group_reference(sg_ref, protocol, from_port, to_port, is_inbound=True):
     """
-    Get formatted inbound and outbound rules for a security group
+    Format security group reference rule details
     """
-    inbound_rules = []
-    outbound_rules = []
+    if protocol == '-1':
+        protocol = 'All'
     
-    # Process inbound rules (IpPermissions)
-    for permission in sg.get('IpPermissions', []):
-        # Get protocol and port range
-        protocol = permission.get('IpProtocol', 'All')
-        if protocol == '-1':
-            protocol = 'All'
-        
-        from_port = permission.get('FromPort', 'All')
-        to_port = permission.get('ToPort', 'All')
-        
-        # Process IPv4 ranges
-        for ip_range in permission.get('IpRanges', []):
-            rule = ip_range.copy()
-            rule['IpProtocol'] = protocol
-            rule['FromPort'] = from_port
-            rule['ToPort'] = to_port
-            inbound_rules.append(format_security_rule(rule, 'inbound'))
-        
-        # Process IPv6 ranges
-        for ip_range in permission.get('Ipv6Ranges', []):
-            rule = ip_range.copy()
-            rule['IpProtocol'] = protocol
-            rule['FromPort'] = from_port
-            rule['ToPort'] = to_port
-            inbound_rules.append(format_security_rule(rule, 'inbound'))
-        
-        # Process security group references
-        for user_id_group_pair in permission.get('UserIdGroupPairs', []):
-            rule = user_id_group_pair.copy()
-            rule['IpProtocol'] = protocol
-            rule['FromPort'] = from_port
-            rule['ToPort'] = to_port
-            inbound_rules.append(format_security_rule(rule, 'inbound'))
+    # Format port range
+    port_range = ''
+    if from_port is not None and to_port is not None:
+        if from_port == to_port:
+            port_range = str(from_port)
+        else:
+            port_range = f"{from_port}-{to_port}"
+    else:
+        port_range = 'All'
     
-    # Process outbound rules (IpPermissionsEgress)
-    for permission in sg.get('IpPermissionsEgress', []):
-        # Get protocol and port range
-        protocol = permission.get('IpProtocol', 'All')
-        if protocol == '-1':
-            protocol = 'All'
-        
-        from_port = permission.get('FromPort', 'All')
-        to_port = permission.get('ToPort', 'All')
-        
-        # Process IPv4 ranges
-        for ip_range in permission.get('IpRanges', []):
-            rule = ip_range.copy()
-            rule['IpProtocol'] = protocol
-            rule['FromPort'] = from_port
-            rule['ToPort'] = to_port
-            outbound_rules.append(format_security_rule(rule, 'outbound'))
-        
-        # Process IPv6 ranges
-        for ip_range in permission.get('Ipv6Ranges', []):
-            rule = ip_range.copy()
-            rule['IpProtocol'] = protocol
-            rule['FromPort'] = from_port
-            rule['ToPort'] = to_port
-            outbound_rules.append(format_security_rule(rule, 'outbound'))
-        
-        # Process security group references
-        for user_id_group_pair in permission.get('UserIdGroupPairs', []):
-            rule = user_id_group_pair.copy()
-            rule['IpProtocol'] = protocol
-            rule['FromPort'] = from_port
-            rule['ToPort'] = to_port
-            outbound_rules.append(format_security_rule(rule, 'outbound'))
+    # Format security group reference
+    sg_identifier = ""
+    if 'GroupId' in sg_ref:
+        sg_identifier = f"sg:{sg_ref['GroupId']}"
+    elif 'GroupName' in sg_ref:
+        sg_identifier = f"sg:{sg_ref['GroupName']}"
+    else:
+        sg_identifier = "sg:Unknown"
     
-    return {
-        'inbound': inbound_rules,
-        'outbound': outbound_rules
-    }
+    if is_inbound:
+        return f"{sg_identifier} → {protocol}:{port_range}"
+    else:
+        return f"{protocol}:{port_range} → {sg_identifier}"
 
 def get_security_group_resources(ec2_client, sg_id):
     """
@@ -377,11 +289,11 @@ def get_security_group_resources(ec2_client, sg_id):
     
     return resources
 
-def get_security_groups(region):
+def get_security_group_rules(region):
     """
-    Get all security groups from a specific region with their rules and resources
+    Get all security groups and their rules from a specific region
     """
-    security_groups = []
+    security_group_rules = []
     
     try:
         # Create EC2 client for this region
@@ -390,85 +302,252 @@ def get_security_groups(region):
         # Get all security groups
         response = ec2_client.describe_security_groups()
         
+        # Counter for generating unique rule IDs
+        rule_counter = 0
+        
         for sg in response.get('SecurityGroups', []):
+            sg_id = sg['GroupId']
+            sg_name = sg.get('GroupName', 'Unnamed')
+            
             # Get VPC name if available
             vpc_id = sg.get('VpcId', '')
             vpc_name = get_vpc_name(ec2_client, vpc_id) if vpc_id else "No VPC (EC2-Classic)"
             
-            # Get inbound and outbound rules
-            rules = get_security_group_rules(sg)
-            inbound_rules = rules['inbound']
-            outbound_rules = rules['outbound']
-            
             # Get resources using this security group
-            resources = get_security_group_resources(ec2_client, sg['GroupId'])
+            resources = get_security_group_resources(ec2_client, sg_id)
+            resources_str = '; '.join(resources) if resources else 'None'
             
-            # Create security group entry
-            sg_entry = {
-                'Name': sg.get('GroupName', 'Unnamed'),
-                'ID': sg['GroupId'],
-                'VPC': vpc_name,
-                'Description': sg.get('Description', ''),
-                'Inbound Rules': '; '.join(inbound_rules) if inbound_rules else 'None',
-                'Outbound Rules': '; '.join(outbound_rules) if outbound_rules else 'None',
-                'Used By': '; '.join(resources) if resources else 'None',
-                'Region': region
-            }
+            # Get description
+            description = sg.get('Description', '')
             
-            security_groups.append(sg_entry)
+            # Process inbound rules (IpPermissions)
+            for permission in sg.get('IpPermissions', []):
+                protocol = permission.get('IpProtocol', 'All')
+                from_port = permission.get('FromPort', None)
+                to_port = permission.get('ToPort', None)
+                
+                # Process IPv4 ranges
+                for ip_range in permission.get('IpRanges', []):
+                    rule_counter += 1
+                    rule_id = f"R{rule_counter}"
+                    rule_desc = ip_range.get('Description', '')
+                    
+                    rule_text = format_ip_range(ip_range, protocol, from_port, to_port, is_inbound=True)
+                    
+                    security_group_rules.append({
+                        'Rule ID': rule_id,
+                        'SG Name': sg_name,
+                        'SG ID': sg_id,
+                        'VPC': vpc_name,
+                        'SG Description': description,
+                        'Direction': 'Inbound',
+                        'Rule': rule_text,
+                        'Rule Description': rule_desc,
+                        'Protocol': protocol if protocol != '-1' else 'All',
+                        'From Port': from_port if from_port is not None else 'All',
+                        'To Port': to_port if to_port is not None else 'All',
+                        'CIDR': ip_range.get('CidrIp', ''),
+                        'Used By': resources_str,
+                        'Region': region
+                    })
+                
+                # Process IPv6 ranges
+                for ip_range in permission.get('Ipv6Ranges', []):
+                    rule_counter += 1
+                    rule_id = f"R{rule_counter}"
+                    rule_desc = ip_range.get('Description', '')
+                    
+                    rule_text = format_ip_range(ip_range, protocol, from_port, to_port, is_inbound=True)
+                    
+                    security_group_rules.append({
+                        'Rule ID': rule_id,
+                        'SG Name': sg_name,
+                        'SG ID': sg_id,
+                        'VPC': vpc_name,
+                        'SG Description': description,
+                        'Direction': 'Inbound',
+                        'Rule': rule_text,
+                        'Rule Description': rule_desc,
+                        'Protocol': protocol if protocol != '-1' else 'All',
+                        'From Port': from_port if from_port is not None else 'All',
+                        'To Port': to_port if to_port is not None else 'All',
+                        'CIDR': ip_range.get('CidrIpv6', ''),
+                        'Used By': resources_str,
+                        'Region': region
+                    })
+                
+                # Process security group references
+                for sg_ref in permission.get('UserIdGroupPairs', []):
+                    rule_counter += 1
+                    rule_id = f"R{rule_counter}"
+                    rule_desc = sg_ref.get('Description', '')
+                    
+                    rule_text = format_security_group_reference(sg_ref, protocol, from_port, to_port, is_inbound=True)
+                    
+                    security_group_rules.append({
+                        'Rule ID': rule_id,
+                        'SG Name': sg_name,
+                        'SG ID': sg_id,
+                        'VPC': vpc_name,
+                        'SG Description': description,
+                        'Direction': 'Inbound',
+                        'Rule': rule_text,
+                        'Rule Description': rule_desc,
+                        'Protocol': protocol if protocol != '-1' else 'All',
+                        'From Port': from_port if from_port is not None else 'All',
+                        'To Port': to_port if to_port is not None else 'All',
+                        'Referenced SG': sg_ref.get('GroupId', ''),
+                        'Used By': resources_str,
+                        'Region': region
+                    })
+            
+            # Process outbound rules (IpPermissionsEgress)
+            for permission in sg.get('IpPermissionsEgress', []):
+                protocol = permission.get('IpProtocol', 'All')
+                from_port = permission.get('FromPort', None)
+                to_port = permission.get('ToPort', None)
+                
+                # Process IPv4 ranges
+                for ip_range in permission.get('IpRanges', []):
+                    rule_counter += 1
+                    rule_id = f"R{rule_counter}"
+                    rule_desc = ip_range.get('Description', '')
+                    
+                    rule_text = format_ip_range(ip_range, protocol, from_port, to_port, is_inbound=False)
+                    
+                    security_group_rules.append({
+                        'Rule ID': rule_id,
+                        'SG Name': sg_name,
+                        'SG ID': sg_id,
+                        'VPC': vpc_name,
+                        'SG Description': description,
+                        'Direction': 'Outbound',
+                        'Rule': rule_text,
+                        'Rule Description': rule_desc,
+                        'Protocol': protocol if protocol != '-1' else 'All',
+                        'From Port': from_port if from_port is not None else 'All',
+                        'To Port': to_port if to_port is not None else 'All',
+                        'CIDR': ip_range.get('CidrIp', ''),
+                        'Used By': resources_str,
+                        'Region': region
+                    })
+                
+                # Process IPv6 ranges
+                for ip_range in permission.get('Ipv6Ranges', []):
+                    rule_counter += 1
+                    rule_id = f"R{rule_counter}"
+                    rule_desc = ip_range.get('Description', '')
+                    
+                    rule_text = format_ip_range(ip_range, protocol, from_port, to_port, is_inbound=False)
+                    
+                    security_group_rules.append({
+                        'Rule ID': rule_id,
+                        'SG Name': sg_name,
+                        'SG ID': sg_id,
+                        'VPC': vpc_name,
+                        'SG Description': description,
+                        'Direction': 'Outbound',
+                        'Rule': rule_text,
+                        'Rule Description': rule_desc,
+                        'Protocol': protocol if protocol != '-1' else 'All',
+                        'From Port': from_port if from_port is not None else 'All',
+                        'To Port': to_port if to_port is not None else 'All',
+                        'CIDR': ip_range.get('CidrIpv6', ''),
+                        'Used By': resources_str,
+                        'Region': region
+                    })
+                
+                # Process security group references
+                for sg_ref in permission.get('UserIdGroupPairs', []):
+                    rule_counter += 1
+                    rule_id = f"R{rule_counter}"
+                    rule_desc = sg_ref.get('Description', '')
+                    
+                    rule_text = format_security_group_reference(sg_ref, protocol, from_port, to_port, is_inbound=False)
+                    
+                    security_group_rules.append({
+                        'Rule ID': rule_id,
+                        'SG Name': sg_name,
+                        'SG ID': sg_id,
+                        'VPC': vpc_name,
+                        'SG Description': description,
+                        'Direction': 'Outbound',
+                        'Rule': rule_text,
+                        'Rule Description': rule_desc,
+                        'Protocol': protocol if protocol != '-1' else 'All',
+                        'From Port': from_port if from_port is not None else 'All',
+                        'To Port': to_port if to_port is not None else 'All',
+                        'Referenced SG': sg_ref.get('GroupId', ''),
+                        'Used By': resources_str,
+                        'Region': region
+                    })
+            
+            # If no rules found, add a placeholder entry
+            if not sg.get('IpPermissions', []) and not sg.get('IpPermissionsEgress', []):
+                rule_counter += 1
+                rule_id = f"R{rule_counter}"
+                
+                security_group_rules.append({
+                    'Rule ID': rule_id,
+                    'SG Name': sg_name,
+                    'SG ID': sg_id,
+                    'VPC': vpc_name,
+                    'SG Description': description,
+                    'Direction': 'N/A',
+                    'Rule': 'No rules defined',
+                    'Rule Description': '',
+                    'Protocol': 'N/A',
+                    'From Port': 'N/A',
+                    'To Port': 'N/A',
+                    'CIDR': '',
+                    'Used By': resources_str,
+                    'Region': region
+                })
         
-        return security_groups
+        return security_group_rules
     except Exception as e:
         print(f"Error getting security groups in region {region}: {e}")
         return []
 
-def export_to_excel(security_groups, account_name):
+def export_to_excel(security_group_rules, account_name):
     """
-    Export security groups data to Excel
+    Export security group rules data to Excel
     """
     import pandas as pd
     
-    if not security_groups:
-        print("No security groups found to export.")
+    if not security_group_rules:
+        print("No security group rules found to export.")
         return None
     
     # Create a DataFrame
-    df = pd.DataFrame(security_groups)
-    
-    # Organize by region
-    regions = df['Region'].unique()
+    df = pd.DataFrame(security_group_rules)
     
     # Get current date for filename
     current_date = datetime.datetime.now().strftime("%m.%d.%Y")
     
-    # Create output directory if it doesn't exist
-    output_dir = Path(__file__).parent.parent / "output"
-    output_dir.mkdir(exist_ok=True)
+    # Use utils to create output filename
+    filename = utils.create_export_filename(
+        account_name, 
+        "sg-rules", 
+        "", 
+        current_date
+    )
     
-    # Create full path for output file
-    output_file = output_dir / f"{account_name}-security-groups-export-{current_date}.xlsx"
+    # Get output path
+    output_path = utils.get_output_filepath(filename)
     
     # Create an Excel writer
-    writer = pd.ExcelWriter(output_file, engine='openpyxl')
+    writer = pd.ExcelWriter(output_path, engine='openpyxl')
     
-    # First, create a summary sheet with all security groups
-    print("Creating summary sheet with all security groups...")
-    df.to_excel(writer, sheet_name='All Security Groups', index=False)
-    
-    # Then create a sheet for each region
-    for region in regions:
-        print(f"Creating sheet for region: {region}")
-        region_df = df[df['Region'] == region]
-        if not region_df.empty:
-            # Remove the Region column as it's redundant in a region-specific sheet
-            region_df = region_df.drop(columns=['Region'])
-            region_df.to_excel(writer, sheet_name=region, index=False)
+    # Write all security group rules to a single sheet
+    print("Creating Security Group Rules sheet...")
+    df.to_excel(writer, sheet_name='Security Group Rules', index=False)
     
     # Save the Excel file
     writer.close()
     
-    print(f"Export successful. File saved to: {output_file}")
-    return output_file
+    print(f"Export successful. File saved to: {output_path}")
+    return output_path
 
 def main():
     """
@@ -485,40 +564,40 @@ def main():
     regions = get_all_regions()
     print(f"Found {len(regions)} regions.")
     
-    # Collect security groups from all regions
-    all_security_groups = []
+    # Collect security group rules from all regions
+    all_security_group_rules = []
     total_regions = len(regions)
     
-    print("\nCollecting security group information across all regions...")
+    print("\nCollecting security group rules across all regions...")
     print("This may take some time depending on the number of regions and security groups.")
     
     for i, region in enumerate(regions, 1):
         progress = (i / total_regions) * 100
         print(f"[{progress:.1f}%] Processing region: {region} ({i}/{total_regions})")
         
-        # Get security groups from this region
-        region_groups = get_security_groups(region)
-        all_security_groups.extend(region_groups)
+        # Get security group rules from this region
+        region_rules = get_security_group_rules(region)
+        all_security_group_rules.extend(region_rules)
         
-        print(f"  Found {len(region_groups)} security groups in {region}")
+        print(f"  Found {len(region_rules)} security group rules in {region}")
         
         # Add a small delay to avoid throttling
         time.sleep(0.5)
     
     # Print summary
-    total_groups = len(all_security_groups)
-    print(f"\nTotal security groups found across all regions: {total_groups}")
+    total_rules = len(all_security_group_rules)
+    print(f"\nTotal security group rules found across all regions: {total_rules}")
     
-    if total_groups > 0:
+    if total_rules > 0:
         # Export to Excel
-        print("\nExporting security group information to Excel...")
-        output_file = export_to_excel(all_security_groups, account_name)
+        print("\nExporting security group rules to Excel...")
+        output_file = export_to_excel(all_security_group_rules, account_name)
         
         if output_file:
             print("\nScript completed successfully.")
             print(f"Output file: {output_file}")
     else:
-        print("\nNo security groups found. Nothing to export.")
+        print("\nNo security group rules found. Nothing to export.")
 
 if __name__ == "__main__":
     try:
