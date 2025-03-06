@@ -8,7 +8,7 @@
 
 Title: StratusScan - AWS Resource Exporter Main Menu
 Version: v1.5.0
-Date: MAR-05-2025
+Date: MAR-06-2025
 
 Description:
 This script provides a centralized interface for executing various AWS resource

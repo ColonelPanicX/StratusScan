@@ -43,7 +43,7 @@ StratusScan can export information about the following AWS resources:
 
 1. Clone or download the StratusScan repository
 2. Ensure Python 3.6+ is installed
-3. Install the required Python packages:
+3. While the scripts will check for missing dependencies and prompt to have them installed, you can preemptively install the required packages by running the following command:
    ```
    pip install boto3 pandas openpyxl
    ```
