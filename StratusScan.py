@@ -7,8 +7,8 @@
 ===========================
 
 Title: StratusScan - AWS Resource Exporter Main Menu
-Version: v1.3.1
-Date: FEB-28-2025
+Version: v1.5.0
+Date: MAR-05-2025
 
 Description:
 This script provides a centralized interface for executing various AWS resource
@@ -61,7 +61,7 @@ def print_header():
     print("                         STRATUSSCAN                                ")
     print("                  AWS RESOURCE EXPORTER MENU                        ")
     print("====================================================================")
-    print("Version: v1.3.1                                 Date: FEB-28-2025")
+    print("Version: v1.4.0                                 Date: MAR-05-2025")
     print("====================================================================")
     
     # Get the current AWS account ID and map to account name
@@ -196,46 +196,71 @@ def get_script_mapping():
             "description": "Export AWS billing data"
         },
         "2": {
+            "name": "Compute Optimizer",
+            "file": scripts_dir / "compute-optimizer-export.py",
+            "description": "Export AWS Compute Optimizer recommendations"
+        },
+        "3": {
             "name": "Cost Optimization",
             "file": scripts_dir / "trusted-advisor-cost-optimization-export.py",
             "description": "Export Trusted Advisor cost optimization recommendations"
         },
-        "3": {
+        "4": {
             "name": "EBS (Elastic Block Storage)",
-            "file": scripts_dir / "ebs-export.py",
+            "file": scripts_dir / "ebs-volumes-export.py",
             "description": "Export EBS volume information"
         },
-        "4": {
+        "5": {
+            "name": "EBS Snapshots",
+            "file": scripts_dir / "ebs-snapshots-export.py",
+            "description": "Export EBS snapshot information"
+        },
+        "6": {
             "name": "EC2",
             "file": scripts_dir / "ec2-export.py",
             "description": "Export EC2 instance data"
         },
-        "5": {
+        "7": {
+            "name": "ECS (Elastic Container Service)",
+            "file": scripts_dir / "ecs-export.py",
+            "description": "Export ECS resources information"
+        },
+        "8": {
             "name": "ELB (Elastic Load Balancer)",
             "file": scripts_dir / "elb-export.py",
             "description": "Export load balancer information"
         },
-        "6": {
+        "9": {
+            "name": "NACLs (Network ACLs)",
+            "file": scripts_dir / "nacl-export.py",
+            "description": "Export Network ACL information"
+        },
+        "10": {
             "name": "RDS (Relational Database Service)",
             "file": scripts_dir / "rds-export.py",
             "description": "Export RDS instance information"
         },
-        "7": {
+        "11": {
+            "name": "Route Tables",
+            "file": scripts_dir / "route-tables-export.py",
+            "description": "Export Route Table information"
+        },
+        "12": {
             "name": "S3",
             "file": scripts_dir / "s3-export.py",
             "description": "Export S3 bucket information"
         },
-        "8": {
+        "13": {
             "name": "Security Groups",
             "file": scripts_dir / "security-groups-export.py",
             "description": "Export security group information"
         },
-        "9": {
+        "14": {
             "name": "VPC/Subnet",
             "file": scripts_dir / "vpc-data-export.py",
             "description": "Export VPC and subnet information"
         },
-        "10": {
+        "15": {
             "name": "Create Output Archive",
             "file": None,  # Special case, handled directly
             "description": "Zip all exports to a single file"
@@ -384,7 +409,7 @@ def display_menu():
                 confirm = input("Do you want to continue? (y/n): ").lower()
                 if confirm == 'y':
                     # Handle special case for creating output archive
-                    if user_choice == "10":  # Create Output Archive
+                    if user_choice == "15":  # Create Output Archive
                         success = create_output_archive(account_name)
                     else:
                         # Normal script execution

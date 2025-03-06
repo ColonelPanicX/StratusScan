@@ -5,8 +5,8 @@
 ===========================
 
 Title: StratusScan Utilities Module
-Version: v1.1.0
-Date: MAR-03-2025
+Version: v1.2.0
+Date: MAR-05-2025
 
 Description:
 Shared utility functions for StratusScan scripts. This module provides common
@@ -267,7 +267,7 @@ def is_valid_aws_account_id(account_id):
         bool: True if valid, False otherwise
     """
     # AWS account IDs are 12 digits
-    pattern = re.compile(r'^\d{12}$')
+    pattern = re.compile(r'^\d{12})
     return bool(pattern.match(str(account_id)))
 
 def add_account_mapping(account_id, account_name):

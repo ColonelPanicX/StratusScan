@@ -16,11 +16,16 @@ StratusScan is a collection of Python scripts designed to scan and export AWS re
 StratusScan can export information about the following AWS resources:
 
 - **Billing**: Monthly or yearly AWS billing data by service
+- **Compute Optimizer**: AWS Compute Optimizer recommendations for EC2, ASG, EBS, Lambda, and ECS
 - **Cost Optimization**: Trusted Advisor cost optimization recommendations
 - **EBS Volumes**: Volume IDs, size, state, and attachment information
+- **EBS Snapshots**: Snapshot IDs, size, encryption status, and creation dates
 - **EC2 Instances**: Detailed instance information including OS, size, and network config
+- **ECS Resources**: Clusters, services, tasks, and container details
 - **Elastic Load Balancers**: Classic, Application, and Network load balancers
+- **Network ACLs**: NACL rules, subnet associations, and configurations
 - **RDS Instances**: Database engine, size, storage, and connection information
+- **Route Tables**: VPC route tables, rules, and associations
 - **S3 Buckets**: Bucket information including size, object count, and region
 - **Security Groups**: Group details, inbound/outbound rules, and resource associations
 - **VPC Resources**: VPCs, subnets, NAT gateways, peering connections, and Elastic IPs
@@ -55,11 +60,16 @@ StratusScan/
 ├── config.json         (Configuration file)
 ├── scripts/            (Directory for all export scripts)
 │   ├── billing-export.py
+│   ├── compute-optimizer-export.py
 │   ├── trusted-advisor-cost-optimization-export.py
-│   ├── ebs-export.py
+│   ├── ebs-volumes-export.py
+│   ├── ebs-snapshots-export.py
 │   ├── ec2-export.py
+│   ├── ecs-export.py
 │   ├── elb-export.py
-│   ├── rds-instance-export.py
+│   ├── nacl-export.py
+│   ├── rds-export.py
+│   ├── route-tables-export.py
 │   ├── s3-export.py
 │   ├── security-groups-export.py
 │   └── vpc-data-export.py
@@ -126,6 +136,7 @@ The scripts require read-only access to the AWS resources they're exporting. At 
 - ReadOnlyAccess
 - For billing data: ViewBilling
 - For Trusted Advisor: AWSSupportAccess (requires Business or Enterprise Support plan)
+- For Compute Optimizer: ComputeOptimizerReadOnlyAccess
 
 For specific resource types, more limited permissions can be used. Refer to the AWS documentation for the specific services.
 
