@@ -6,8 +6,8 @@
 ===========================
 
 Title: AWS EC2 Instance Data Export Script
-Version: v1.10.2
-Date: FEB-27-2025
+Version: v1.10.3
+Date: MAR-10-2025
 
 Description:
 This script queries AWS EC2 instances across all regions and exports detailed instance 
@@ -195,6 +195,29 @@ def get_os_info_from_ami(ec2_client, image_id, platform_details, platform):
         print(f"Warning: Could not get detailed OS info for AMI {image_id}: {e}")
         return platform_details
 
+def format_tags(tags):
+    """
+    Format EC2 instance tags in the format "Key1:Value1, Key2:Value2, etc..."
+    
+    Args:
+        tags (list): List of tag dictionaries with Key and Value
+        
+    Returns:
+        str: Formatted tags string or 'N/A' if no tags
+    """
+    if not tags:
+        return 'N/A'
+    
+    formatted_tags = []
+    for tag in tags:
+        if 'Key' in tag and 'Value' in tag:
+            formatted_tags.append(f"{tag['Key']}:{tag['Value']}")
+    
+    if formatted_tags:
+        return ', '.join(formatted_tags)
+    else:
+        return 'N/A'
+
 def check_dependencies():
     """Check and install required dependencies if user agrees"""
     required_packages = ['pandas', 'openpyxl', 'boto3']
@@ -314,6 +337,9 @@ def get_instance_data(region, instance_filter=None):
                 instance_state = instance.get('State', {}).get('Name', 'N/A')
                 stop_date = get_instance_stop_date(ec2, instance.get('InstanceId', ''), instance_state)
                 
+                # Format tags
+                instance_tags = format_tags(instance.get('Tags', []))
+                
                 # Extract instance information
                 instance_data = {
                     'Computer Name': next((tag['Value'] for tag in instance.get('Tags', [])
@@ -343,7 +369,8 @@ def get_instance_data(region, instance_filter=None):
                     'vCPU': instance.get('CpuOptions', {}).get('CoreCount', 'N/A'),
                     'RAM (MiB)': ram_mib,
                     'Root Device Volume ID': root_volume_id,
-                    'Root Device Size (GiB)': root_device_size
+                    'Root Device Size (GiB)': root_device_size,
+                    'Tags': instance_tags
                 }
                 instances.append(instance_data)
                 
