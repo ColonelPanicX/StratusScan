@@ -6,7 +6,7 @@
 ===========================
 
 Title: AWS EC2 Instance Data Export Script
-Version: v1.10.3
+Version: v1.10.4
 Date: MAR-10-2025
 
 Description:
@@ -340,6 +340,14 @@ def get_instance_data(region, instance_filter=None):
                 # Format tags
                 instance_tags = format_tags(instance.get('Tags', []))
                 
+                # Get owner ID and format as "ACCOUNT-NAME (ACCOUNT-ID)"
+                owner_id = instance.get('OwnerId', 'N/A')
+                if owner_id != 'N/A':
+                    account_name = utils.get_account_name(owner_id, default=None)
+                    account_display = f"{account_name} ({owner_id})" if account_name else owner_id
+                else:
+                    account_display = 'N/A'
+                
                 # Extract instance information
                 instance_data = {
                     'Computer Name': next((tag['Value'] for tag in instance.get('Tags', [])
@@ -365,7 +373,7 @@ def get_instance_data(region, instance_filter=None):
                     'Launch Time': instance.get('LaunchTime', 'N/A'),
                     'Key Pair': instance.get('KeyName', 'N/A'),
                     'Region': region,
-                    'Owner ID': instance.get('OwnerId', 'N/A'),
+                    'Account': account_display,
                     'vCPU': instance.get('CpuOptions', {}).get('CoreCount', 'N/A'),
                     'RAM (MiB)': ram_mib,
                     'Root Device Volume ID': root_volume_id,
