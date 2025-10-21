@@ -138,11 +138,23 @@ def get_available_regions():
     Returns:
         list: List of available regions
     """
-    # Security Hub is available in both AWS regions
-    aws_regions = ['us-east-1', 'us-west-2']
+    # Get regions from config or use defaults
+    config = utils.get_config()
+    default_regions = config.get('default_regions', ['us-east-1', 'us-west-2'])
+
+    # Check for resource preferences for Security Hub
+    resource_prefs = config.get('resource_preferences', {})
+    securityhub_prefs = resource_prefs.get('security_hub', {})
+    aws_regions = securityhub_prefs.get('regions', default_regions)
+
     available_regions = []
 
     for region in aws_regions:
+        # Validate region is a real AWS region
+        if not utils.is_aws_region(region):
+            utils.log_warning(f"Skipping invalid region: {region}")
+            continue
+
         try:
             # Test Security Hub availability
             client = boto3.client('securityhub', region_name=region)
@@ -156,7 +168,7 @@ def get_available_regions():
             # Skip regions where Security Hub is not available
             continue
 
-    return available_regions if available_regions else aws_regions  # Fallback to all AWS regions
+    return available_regions if available_regions else aws_regions  # Fallback to configured regions
 
 def collect_security_hub_findings(region):
     """
@@ -233,9 +245,10 @@ def collect_security_hub_findings(region):
             for finding in findings:
                 processed += 1
                 progress = (processed / total_findings) * 100 if total_findings > 0 else 0
-                finding_title = finding.get('Title', 'Unknown Finding')[:50]
 
-                utils.log_info(f"[{progress:.1f}%] Processing finding {processed}/{total_findings}: {finding_title}")
+                # Log progress every 50 findings or at completion to reduce verbosity
+                if processed % 50 == 0 or processed == total_findings:
+                    utils.log_info(f"[{progress:.1f}%] Processed {processed}/{total_findings} findings")
 
                 # Extract remediation information
                 remediation = extract_remediation_info(finding)
@@ -451,18 +464,24 @@ def export_to_excel(all_findings_data, account_id, account_name):
 
         # Summary by severity
         if all_findings_data:
-            severity_counts = findings_df['Severity Label'].value_counts().reset_index()
-            severity_counts.columns = ['Severity Level', 'Count']
+            severity_counts = (findings_df['Severity Label']
+                             .value_counts()
+                             .rename_axis('Severity Level')
+                             .reset_index(name='Count'))
             data_frames['Summary by Severity'] = severity_counts
 
             # Summary by compliance status
-            compliance_counts = findings_df['Compliance Status'].value_counts().reset_index()
-            compliance_counts.columns = ['Compliance Status', 'Count']
+            compliance_counts = (findings_df['Compliance Status']
+                               .value_counts()
+                               .rename_axis('Compliance Status')
+                               .reset_index(name='Count'))
             data_frames['Summary by Compliance'] = compliance_counts
 
             # Summary by product
-            product_counts = findings_df['Product Name'].value_counts().reset_index()
-            product_counts.columns = ['Product Name', 'Count']
+            product_counts = (findings_df['Product Name']
+                            .value_counts()
+                            .rename_axis('Product Name')
+                            .reset_index(name='Count'))
             data_frames['Summary by Product'] = product_counts
 
             # High/Critical findings
@@ -538,10 +557,6 @@ def main():
 
         # Print title and get account info
         account_id, account_name = print_title()
-
-        # Validate AWS environment
-                print("Exiting script...")
-                sys.exit(0)
 
         try:
             # Test AWS credentials
