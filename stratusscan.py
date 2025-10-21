@@ -352,11 +352,16 @@ def get_menu_structure():
                     "description": "Export EKS cluster information"
                 },
                 "4": {
-                    "name": "All Compute Resources",
-                    "file": scripts_dir / "compute-resources.py",
-                    "description": "Export all compute resources (EC2, RDS, EKS) in one comprehensive report"
+                    "name": "ECS",
+                    "file": scripts_dir / "ecs-export.py",
+                    "description": "Export ECS cluster and service information"
                 },
                 "5": {
+                    "name": "All Compute Resources",
+                    "file": scripts_dir / "compute-resources.py",
+                    "description": "Export all compute resources (EC2, RDS, EKS, ECS) in one comprehensive report"
+                },
+                "6": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
@@ -417,11 +422,16 @@ def get_menu_structure():
                     "description": "Export security group rules and associations"
                 },
                 "5": {
-                    "name": "All Network Resources",
-                    "file": scripts_dir / "network-resources.py",
-                    "description": "Export all network resources (VPC, ELB, NACLs, Security Groups) in one comprehensive report"
+                    "name": "Route Tables",
+                    "file": scripts_dir / "route-tables-export.py",
+                    "description": "Export route table information"
                 },
                 "6": {
+                    "name": "All Network Resources",
+                    "file": scripts_dir / "network-resources.py",
+                    "description": "Export all network resources (VPC, ELB, NACLs, Security Groups, Route Tables) in one comprehensive report"
+                },
+                "7": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
@@ -478,6 +488,11 @@ def get_menu_structure():
                     }
                 },
                 "2": {
+                    "name": "AWS Organizations",
+                    "file": scripts_dir / "organizations-export.py",
+                    "description": "Export AWS Organizations structure, accounts, and organizational units"
+                },
+                "3": {
                     "name": "IAM Identity Center",
                     "description": "IAM Identity Center (formerly AWS SSO) resources",
                     "submenu": {
@@ -492,18 +507,23 @@ def get_menu_structure():
                             "description": "Export IAM Identity Center groups with detailed member information"
                         },
                         "3": {
+                            "name": "IAM Identity Center Permission Sets",
+                            "file": scripts_dir / "iam-identity-center-permission-sets-export.py",
+                            "description": "Export IAM Identity Center permission sets and assignments"
+                        },
+                        "4": {
                             "name": "IAM Identity Center Comprehensive",
                             "file": scripts_dir / "iam-identity-center-comprehensive-export.py",
                             "description": "Export comprehensive IAM Identity Center data (users, groups, permission sets, assignments) in one report"
                         },
-                        "4": {
+                        "5": {
                             "name": "Return to Previous Menu",
                             "file": None,
                             "description": "Return to the previous menu"
                         }
                     }
                 },
-                "3": {
+                "4": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
@@ -511,6 +531,21 @@ def get_menu_structure():
             }
         },
         "7": {
+            "name": "Billing and Cost Management",
+            "submenu": {
+                "1": {
+                    "name": "Billing Export",
+                    "file": scripts_dir / "billing-export.py",
+                    "description": "Export AWS billing and cost data"
+                },
+                "2": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "8": {
             "name": "Cost Optimization Resources",
             "submenu": {
                 "1": {
@@ -535,7 +570,7 @@ def get_menu_structure():
                 }
             }
         },
-        "8": {
+        "9": {
             "name": "Output Management",
             "submenu": {
                 "1": {

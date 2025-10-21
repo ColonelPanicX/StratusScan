@@ -6,39 +6,65 @@ StratusScan is a collection of Python scripts designed to scan and export AWS re
 
 ## Features
 
-- **Centralized Menu Interface**: Easy-to-use menu for executing various export tools
+- **Centralized Menu Interface**: Easy-to-use hierarchical menu for executing various export tools
 - **Multi-Region Support**: Scan resources across specific regions or all AWS commercial regions
 - **Account Mapping**: Translate AWS account IDs to friendly organization names
 - **Consistent Output**: Standardized Excel exports with timestamp-based filenames
 - **Export Archive**: Built-in functionality to zip all exports into a single file
 - **Dependency Management**: Automatic checking and installation of required Python packages
+- **Cost Optimization**: Multiple cost optimization tools including Billing, Cost Optimization Hub, Compute Optimizer, and Trusted Advisor
+- **Comprehensive Reporting**: All-in-one reports for Compute, Storage, and Network resources
+- **Pricing Integration**: Built-in EC2 and EBS pricing data for cost calculations
+- **Logging System**: Detailed logging with both console and file output for audit trails
 - **Full Service Availability**: Access to all AWS commercial services including Trusted Advisor and Compute Optimizer
 
 ## Supported AWS Resources
 
 StratusScan can export information about the following AWS resources:
 
-- **EBS Volumes**: Volume IDs, size, state, and attachment information
-- **EBS Snapshots**: Snapshot IDs, size, encryption status, and creation dates
-- **EC2 Instances**: Detailed instance information including OS, size, and network config
+### Compute Resources
+- **EC2 Instances**: Detailed instance information including OS, size, cost calculations, and network config
+- **ECS Clusters**: ECS cluster information, services, tasks, and container instances
 - **EKS Clusters**: Kubernetes cluster information, node groups, and configurations
+- **Compute Resources (All-in-One)**: Combined report of all compute resources
+
+### Storage Resources
+- **EBS Volumes**: Volume IDs, size, state, attachment information, and pricing
+- **EBS Snapshots**: Snapshot IDs, size, encryption status, and creation dates
+- **S3 Buckets**: Bucket information including size, object count, region, and configuration
+- **Storage Resources (All-in-One)**: Combined report of all storage resources
+
+### Network Resources
+- **VPC Resources**: VPCs, subnets, NAT gateways, peering connections, and Elastic IPs
 - **Elastic Load Balancers**: Classic, Application, and Network load balancers
-- **IAM Comprehensive**: Complete IAM analysis including users, roles, policies, and permissions
-- **IAM Basic**: Basic IAM user and role information
-- **IAM Identity Center**: AWS SSO/Identity Center users and assignments
-- **IAM Identity Center Groups**: Identity Center group memberships and assignments
-- **IAM Identity Center Comprehensive**: Complete Identity Center analysis with users, groups, permission sets, and assignments
-- **IAM Policies**: Detailed policy analysis including managed and inline policies
-- **IAM Roles**: Role details, trust policies, and attached permissions
-- **Network ACLs**: NACL rules, subnet associations, and configurations
-- **Organizations**: AWS Organizations structure, accounts, and organizational units
-- **RDS Instances**: Database engine, size, storage, and connection information
-- **S3 Buckets**: Bucket information including size, object count, and region
 - **Security Groups**: Group details, inbound/outbound rules, and resource associations
+- **Network ACLs**: NACL rules, subnet associations, and configurations
+- **Route Tables**: Route table information, routes, and subnet associations
+- **Network Resources (All-in-One)**: Combined report of all network resources
+
+### Database Resources
+- **RDS Instances**: Database engine, size, storage, and connection information
+
+### IAM & Identity Resources
+- **IAM Comprehensive**: Complete IAM analysis including users, roles, policies, and permissions
+- **IAM Users**: Basic IAM user information and access keys
+- **IAM Roles**: Role details, trust policies, and attached permissions
+- **IAM Policies**: Detailed policy analysis including managed and inline policies with risk assessment
+- **IAM Identity Center Users**: AWS SSO/Identity Center users and assignments
+- **IAM Identity Center Groups**: Identity Center group memberships and assignments
+- **IAM Identity Center Permission Sets**: Permission set configurations and assignments
+- **IAM Identity Center Comprehensive**: Complete Identity Center analysis with users, groups, permission sets, and assignments
+- **Organizations**: AWS Organizations structure, accounts, and organizational units
+
+### Security Resources
 - **Security Hub**: Security findings, compliance status, and remediation guidance
 - **Services in Use**: Analysis of AWS services currently being used in your environment
-- **VPC Resources**: VPCs, subnets, NAT gateways, peering connections, and Elastic IPs
-- **All-in-One Reports**: Comprehensive resource exports by category (Storage, Compute, Network)
+
+### Cost Optimization Resources
+- **Billing Export**: AWS billing and cost data
+- **Cost Optimization Hub**: Cost Optimization Hub recommendations and savings opportunities
+- **Compute Optimizer**: Compute Optimizer recommendations for EC2, Auto Scaling, EBS, and Lambda
+- **Trusted Advisor Cost Optimization**: Trusted Advisor cost optimization checks and recommendations
 
 ## Requirements
 
@@ -93,31 +119,44 @@ StratusScan/
 ├── configure.py                                     (Configuration setup script)
 ├── utils.py                                         (Utility functions)
 ├── config.json                                      (Configuration file)
+├── reference/                                       (Pricing reference data)
+│   ├── ec2-pricing.csv                              (EC2 instance pricing data)
+│   └── ebsvol-pricing.csv                           (EBS volume pricing data)
 ├── scripts/                                         (Directory for all export scripts)
+│   ├── billing-export.py                            (AWS billing and cost data)
+│   ├── compute-optimizer-export.py                  (Compute Optimizer recommendations)
 │   ├── compute-resources.py                         (All compute resources in one report)
-│   ├── ebs-snapshots.py
-│   ├── ebs-volumes.py
-│   ├── ec2-export.py
-│   ├── eks-export.py
-│   ├── elb-export.py
-│   ├── iam-comprehensive-export.py
-│   ├── iam-export.py
-│   ├── iam-identity-center-comprehensive-export.py
-│   ├── iam-identity-center-export.py
-│   ├── iam-identity-center-groups-export.py
-│   ├── iam-identity-center-permission-sets-export.py
-│   ├── iam-policies-export.py
-│   ├── iam-roles-export.py
-│   ├── nacl-export.py
+│   ├── cost-optimization-hub-export.py              (Cost Optimization Hub recommendations)
+│   ├── ebs-snapshots.py                             (EBS snapshots export)
+│   ├── ebs-snapshots-export.py                      (Alternate EBS snapshots export)
+│   ├── ebs-volumes.py                               (EBS volumes export)
+│   ├── ebs-volumes-export.py                        (Alternate EBS volumes export)
+│   ├── ec2-export.py                                (EC2 instances with cost calculations)
+│   ├── ecs-export.py                                (ECS clusters and services)
+│   ├── eks-export.py                                (EKS Kubernetes clusters)
+│   ├── elb-export.py                                (Elastic Load Balancers)
+│   ├── iam-comprehensive-export.py                  (Complete IAM analysis)
+│   ├── iam-export.py                                (Basic IAM users)
+│   ├── iam-identity-center-comprehensive-export.py  (Complete Identity Center analysis)
+│   ├── iam-identity-center-export.py                (Identity Center users)
+│   ├── iam-identity-center-groups-export.py         (Identity Center groups)
+│   ├── iam-identity-center-permission-sets-export.py(Identity Center permission sets)
+│   ├── iam-policies-export.py                       (IAM policies with risk assessment)
+│   ├── iam-roles-export.py                          (IAM roles and trust policies)
+│   ├── nacl-export.py                               (Network ACL rules)
 │   ├── network-resources.py                         (All network resources in one report)
-│   ├── organizations-export.py
-│   ├── rds-export.py
-│   ├── s3-export.py
-│   ├── security-groups-export.py
-│   ├── security-hub-export.py
-│   ├── services-in-use-export.py
+│   ├── organizations-export.py                      (AWS Organizations structure)
+│   ├── rds-export.py                                (RDS database instances)
+│   ├── route-tables-export.py                       (VPC route tables)
+│   ├── s3-export.py                                 (S3 bucket information)
+│   ├── security-groups-export.py                    (Security group rules)
+│   ├── security-hub-export.py                       (Security Hub findings)
+│   ├── services-in-use-export.py                    (Services currently in use)
 │   ├── storage-resources.py                         (All storage resources in one report)
-│   └── vpc-data-export.py
+│   ├── trusted-advisor-cost-optimization-export.py  (Trusted Advisor cost recommendations)
+│   └── vpc-data-export.py                           (VPC resources)
+├── logs/                                            (Log files directory)
+│   └── ... (Log files will be saved here)
 └── output/                                          (Directory for all exported files)
     └── ... (Export files will be saved here)
 ```
@@ -215,6 +254,8 @@ The scripts require read-only access to the AWS resources they're exporting. At 
 - **IAMReadOnlyAccess**: For IAM-related exports
 - **AWSSupportAccess**: For Trusted Advisor access
 - **ComputeOptimizerReadOnlyAccess**: For Compute Optimizer recommendations
+- **CostOptimizationHubReadOnlyAccess**: For Cost Optimization Hub recommendations
+- **Billing and Cost Management Read Access**: For billing and cost data exports
 
 ### Recommended IAM Policy
 
@@ -234,6 +275,8 @@ The scripts require read-only access to the AWS resources they're exporting. At 
                 "rds:Describe*",
                 "ecs:Describe*",
                 "ecs:List*",
+                "eks:Describe*",
+                "eks:List*",
                 "elasticloadbalancing:Describe*",
                 "iam:Get*",
                 "iam:List*",
@@ -245,10 +288,21 @@ The scripts require read-only access to the AWS resources they're exporting. At 
                 "sso:List*",
                 "sso-admin:Describe*",
                 "sso-admin:List*",
+                "organizations:Describe*",
+                "organizations:List*",
+                "securityhub:Get*",
+                "securityhub:Describe*",
+                "securityhub:List*",
                 "ce:GetCostAndUsage",
+                "ce:GetCostForecast",
                 "ce:GetUsageReport",
+                "cur:DescribeReportDefinitions",
+                "cost-optimization-hub:List*",
+                "cost-optimization-hub:Get*",
                 "compute-optimizer:GetRecommendations*",
+                "compute-optimizer:Describe*",
                 "support:DescribeTrustedAdvisor*",
+                "support:RefreshTrustedAdvisorCheck",
                 "sts:GetCallerIdentity"
             ],
             "Resource": "*"
