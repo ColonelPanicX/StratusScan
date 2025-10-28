@@ -1,7 +1,7 @@
 # StratusScan-CLI
 
 [![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![AWS](https://img.shields.io/badge/AWS-Commercial-orange.svg)](https://aws.amazon.com/)
 
 > A comprehensive AWS resource export tool for multi-account, multi-region environments. Export detailed AWS infrastructure data to Excel with a single command.
@@ -457,7 +457,7 @@ Contributions are welcome! Here's how you can help:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
 ---
 
