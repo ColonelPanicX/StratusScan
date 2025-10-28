@@ -427,11 +427,16 @@ def get_menu_structure():
                     "description": "Export route table information"
                 },
                 "6": {
+                    "name": "Route 53",
+                    "file": scripts_dir / "route53-export.py",
+                    "description": "Export Route 53 hosted zones, DNS records, resolver endpoints, and query logging"
+                },
+                "7": {
                     "name": "All Network Resources",
                     "file": scripts_dir / "network-resources.py",
                     "description": "Export all network resources (VPC, ELB, NACLs, Security Groups, Route Tables) in one comprehensive report"
                 },
-                "7": {
+                "8": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
