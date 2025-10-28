@@ -1,96 +1,81 @@
-# StratusScan - AWS Resource Exporter
+# StratusScan-CLI
 
-> **Important**: It is recommended to run the `configure.py` script before running the main script to set up your configuration, but it is not necessary.
+[![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![AWS](https://img.shields.io/badge/AWS-Commercial-orange.svg)](https://aws.amazon.com/)
 
-StratusScan is a collection of Python scripts designed to scan and export AWS resource information across multiple accounts and regions. This version is optimized for AWS Commercial environments and provides a unified interface for gathering detailed information about various AWS resources and exporting the data into standardized Excel spreadsheets.
+> A comprehensive AWS resource export tool for multi-account, multi-region environments. Export detailed AWS infrastructure data to Excel with a single command.
 
-## Features
+[Quick Start](#-quick-start) • [Features](#-features) • [Installation](#-installation) • [Configuration](#%EF%B8%8F-configuration) • [Documentation](#-usage)
 
-- **Centralized Menu Interface**: Easy-to-use hierarchical menu for executing various export tools
-- **Multi-Region Support**: Scan resources across specific regions or all AWS commercial regions
-- **Account Mapping**: Translate AWS account IDs to friendly organization names
-- **Consistent Output**: Standardized Excel exports with timestamp-based filenames
-- **Export Archive**: Built-in functionality to zip all exports into a single file
-- **Dependency Management**: Automatic checking and installation of required Python packages
-- **Cost Optimization**: Multiple cost optimization tools including Billing, Cost Optimization Hub, Compute Optimizer, and Trusted Advisor
-- **Comprehensive Reporting**: All-in-one reports for Compute, Storage, and Network resources
-- **Pricing Integration**: Built-in EC2 and EBS pricing data for cost calculations
-- **Logging System**: Detailed logging with both console and file output for audit trails
-- **Full Service Availability**: Access to all AWS commercial services including Trusted Advisor and Compute Optimizer
+---
 
-## Supported AWS Resources
+## 🚀 Quick Start
 
-StratusScan can export information about the following AWS resources:
+Get up and running in 5 minutes:
 
-### Compute Resources
-- **EC2 Instances**: Detailed instance information including OS, size, cost calculations, and network config
-- **ECS Clusters**: ECS cluster information, services, tasks, and container instances
-- **EKS Clusters**: Kubernetes cluster information, node groups, and configurations
-- **Compute Resources (All-in-One)**: Combined report of all compute resources
+```bash
+# 1. Clone the repository
+git clone https://github.com/ColonelPanicX/StratusScan-CLI.git
+cd StratusScan-CLI
 
-### Storage Resources
-- **EBS Volumes**: Volume IDs, size, state, attachment information, and pricing
-- **EBS Snapshots**: Snapshot IDs, size, encryption status, and creation dates
-- **S3 Buckets**: Bucket information including size, object count, region, and configuration
-- **Storage Resources (All-in-One)**: Combined report of all storage resources
+# 2. Install dependencies
+pip install boto3 pandas openpyxl
 
-### Network Resources
-- **VPC Resources**: VPCs, subnets, NAT gateways, peering connections, and Elastic IPs
-- **Elastic Load Balancers**: Classic, Application, and Network load balancers
-- **Security Groups**: Group details, inbound/outbound rules, and resource associations
-- **Network ACLs**: NACL rules, subnet associations, and configurations
-- **Route Tables**: Route table information, routes, and subnet associations
-- **Network Resources (All-in-One)**: Combined report of all network resources
+# 3. Configure AWS credentials (choose one)
+aws configure  # Interactive setup
+# OR set environment variables
+export AWS_ACCESS_KEY_ID="your-key"
+export AWS_SECRET_ACCESS_KEY="your-secret"
 
-### Database Resources
-- **RDS Instances**: Database engine, size, storage, and connection information
+# 4. Run configuration (recommended but optional)
+python configure.py
 
-### IAM & Identity Resources
-- **IAM Comprehensive**: Complete IAM analysis including users, roles, policies, and permissions
-- **IAM Users**: Basic IAM user information and access keys
-- **IAM Roles**: Role details, trust policies, and attached permissions
-- **IAM Policies**: Detailed policy analysis including managed and inline policies with risk assessment
-- **IAM Identity Center Users**: AWS SSO/Identity Center users and assignments
-- **IAM Identity Center Groups**: Identity Center group memberships and assignments
-- **IAM Identity Center Permission Sets**: Permission set configurations and assignments
-- **IAM Identity Center Comprehensive**: Complete Identity Center analysis with users, groups, permission sets, and assignments
-- **Organizations**: AWS Organizations structure, accounts, and organizational units
+# 5. Launch StratusScan
+python stratusscan.py
+```
 
-### Security Resources
-- **Security Hub**: Security findings, compliance status, and remediation guidance
-- **Services in Use**: Analysis of AWS services currently being used in your environment
+That's it! Select a resource to export from the menu and follow the prompts. Exports are saved to the `output/` directory.
 
-### Cost Optimization Resources
-- **Billing Export**: AWS billing and cost data
-- **Cost Optimization Hub**: Cost Optimization Hub recommendations and savings opportunities
-- **Compute Optimizer**: Compute Optimizer recommendations for EC2, Auto Scaling, EBS, and Lambda
-- **Trusted Advisor Cost Optimization**: Trusted Advisor cost optimization checks and recommendations
+---
 
-## Requirements
+## ✨ Features
 
-- Python 3.6+
-- AWS credentials configured (via AWS CLI, environment variables, or instance profile)
-- Access to AWS Commercial environment
-- Required Python packages:
-  - boto3
-  - pandas
-  - openpyxl
+- **🎯 Centralized Menu Interface**: Easy-to-use hierarchical menu for all export tools
+- **🌍 Multi-Region Support**: Scan resources across specific regions or all AWS regions
+- **🏢 Account Mapping**: Translate AWS account IDs to friendly organization names
+- **📊 Standardized Exports**: Consistent Excel output with timestamp-based filenames
+- **📦 Export Archive**: Built-in functionality to zip all exports into a single file
+- **🔧 Dependency Management**: Automatic checking and installation of Python packages
+- **💰 Cost Optimization**: Integrated billing analysis and cost optimization recommendations
+- **📋 Comprehensive Reports**: All-in-one reports for Compute, Storage, and Network resources
+- **💵 Pricing Integration**: Built-in EC2 and EBS pricing data for cost calculations
+- **📝 Logging System**: Detailed audit trails with console and file output
+- **🔐 Read-Only Operations**: Safe, non-destructive AWS resource scanning
 
-## Installation
+---
 
-1. Clone or download the StratusScan repository
-2. Ensure Python 3.6+ is installed
-3. While the scripts will check for missing dependencies and prompt to have them installed, you can preemptively install the required packages by running the following command:
-   ```
-   pip install boto3 pandas openpyxl
-   ```
-4. Set up your AWS credentials using one of the [standard AWS methods](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html)
+## 📋 Installation
 
-## AWS Authentication
+### Requirements
 
-To authenticate with AWS, ensure your credentials are configured:
+- **Python**: 3.6 or higher
+- **AWS Access**: Configured credentials (CLI, environment variables, or IAM role)
+- **Permissions**: Read-only access to AWS resources ([see details](#-aws-permissions))
 
-### Using AWS CLI
+### Install Dependencies
+
+The scripts will prompt to install missing packages automatically, or you can install them manually:
+
+```bash
+pip install boto3 pandas openpyxl
+```
+
+### AWS Authentication
+
+Configure your AWS credentials using one of these methods:
+
+**Option 1: AWS CLI (Recommended)**
 ```bash
 aws configure
 AWS Access Key ID: [Your AWS Access Key]
@@ -99,79 +84,39 @@ Default region name: us-east-1
 Default output format: json
 ```
 
-### Using Environment Variables
+**Option 2: Environment Variables**
 ```bash
 export AWS_ACCESS_KEY_ID="your-aws-access-key"
 export AWS_SECRET_ACCESS_KEY="your-aws-secret-key"
 export AWS_DEFAULT_REGION="us-east-1"
 ```
 
-### Using Instance Profile
-If running on an EC2 instance, the instance profile will automatically provide credentials.
+**Option 3: IAM Instance Profile**
+If running on EC2, credentials are automatically provided via the instance profile.
 
-## Directory Structure
+---
 
-The repository is organized as follows:
+## ⚙️ Configuration
 
-```
-StratusScan/
-├── stratusscan.py                                   (Main menu script)
-├── configure.py                                     (Configuration setup script)
-├── utils.py                                         (Utility functions)
-├── config.json                                      (Configuration file)
-├── reference/                                       (Pricing reference data)
-│   ├── ec2-pricing.csv                              (EC2 instance pricing data)
-│   └── ebsvol-pricing.csv                           (EBS volume pricing data)
-├── scripts/                                         (Directory for all export scripts)
-│   ├── billing-export.py                            (AWS billing and cost data)
-│   ├── compute-optimizer-export.py                  (Compute Optimizer recommendations)
-│   ├── compute-resources.py                         (All compute resources in one report)
-│   ├── cost-optimization-hub-export.py              (Cost Optimization Hub recommendations)
-│   ├── ebs-snapshots.py                             (EBS snapshots export)
-│   ├── ebs-snapshots-export.py                      (Alternate EBS snapshots export)
-│   ├── ebs-volumes.py                               (EBS volumes export)
-│   ├── ebs-volumes-export.py                        (Alternate EBS volumes export)
-│   ├── ec2-export.py                                (EC2 instances with cost calculations)
-│   ├── ecs-export.py                                (ECS clusters and services)
-│   ├── eks-export.py                                (EKS Kubernetes clusters)
-│   ├── elb-export.py                                (Elastic Load Balancers)
-│   ├── iam-comprehensive-export.py                  (Complete IAM analysis)
-│   ├── iam-export.py                                (Basic IAM users)
-│   ├── iam-identity-center-comprehensive-export.py  (Complete Identity Center analysis)
-│   ├── iam-identity-center-export.py                (Identity Center users)
-│   ├── iam-identity-center-groups-export.py         (Identity Center groups)
-│   ├── iam-identity-center-permission-sets-export.py(Identity Center permission sets)
-│   ├── iam-policies-export.py                       (IAM policies with risk assessment)
-│   ├── iam-roles-export.py                          (IAM roles and trust policies)
-│   ├── nacl-export.py                               (Network ACL rules)
-│   ├── network-resources.py                         (All network resources in one report)
-│   ├── organizations-export.py                      (AWS Organizations structure)
-│   ├── rds-export.py                                (RDS database instances)
-│   ├── route-tables-export.py                       (VPC route tables)
-│   ├── s3-export.py                                 (S3 bucket information)
-│   ├── security-groups-export.py                    (Security group rules)
-│   ├── security-hub-export.py                       (Security Hub findings)
-│   ├── services-in-use-export.py                    (Services currently in use)
-│   ├── storage-resources.py                         (All storage resources in one report)
-│   ├── trusted-advisor-cost-optimization-export.py  (Trusted Advisor cost recommendations)
-│   └── vpc-data-export.py                           (VPC resources)
-├── logs/                                            (Log files directory)
-│   └── ... (Log files will be saved here)
-└── output/                                          (Directory for all exported files)
-    └── ... (Export files will be saved here)
+StratusScan uses a `config.json` file for account mappings and preferences.
+
+### Interactive Setup (Recommended)
+
+Run the configuration wizard:
+
+```bash
+python configure.py
 ```
 
-## Configuration
+This interactive tool will guide you through:
+- Setting up account ID to name mappings
+- Configuring default AWS regions
+- Validating AWS permissions
+- Checking dependencies
 
-StratusScan uses a configuration file (`config.json`) to store account mappings and AWS-specific settings. You can either:
+### Manual Configuration
 
-1. **Recommended**: Run the configuration setup script first:
-   ```
-   python configure.py
-   ```
-   This interactive script will help you set up your configuration properly.
-
-2. **Manual**: Create and customize the configuration file manually using the template below:
+Alternatively, create `config.json` manually:
 
 ```json
 {
@@ -190,74 +135,80 @@ StratusScan uses a configuration file (`config.json`) to store account mappings 
   "enabled_services": {
     "trusted_advisor": {
       "enabled": true,
-      "note": "Available in commercial AWS"
+      "note": "Available in AWS Commercial"
     }
   }
 }
 ```
 
-## Usage
+---
 
-1. **Recommended**: First run the configuration setup script (optional but recommended):
-   ```
-   python configure.py
-   ```
+## 📖 Usage
 
-2. Run the main menu script:
-   ```
-   python stratusscan.py
-   ```
+### Main Menu Interface (Recommended)
 
-3. Select the resource type you want to export from the menu
-
-4. Choose your region preference:
-   - All regions
-   - Specific region (us-east-1, us-west-2, etc.)
-
-5. Follow the prompts to configure the export
-
-6. Find the exported file in the `output` directory
-
-7. Optionally, use the archive feature to create a zip file of all exports
-
-## AWS Region Selection
-
-When prompted for regions, you can select from all AWS commercial regions including:
-
-- **us-east-1**: US East (N. Virginia)
-- **us-east-2**: US East (Ohio)
-- **us-west-1**: US West (N. California)
-- **us-west-2**: US West (Oregon)
-- **eu-west-1**: Europe (Ireland)
-- **eu-central-1**: Europe (Frankfurt)
-- **ap-southeast-1**: Asia Pacific (Singapore)
-- **ap-northeast-1**: Asia Pacific (Tokyo)
-- And many more...
-
-The script will validate that you're selecting valid AWS regions and provide helpful error messages if invalid regions are specified.
-
-## Individual Export Scripts
-
-While the main menu is the recommended way to run the export tools, you can also run individual scripts directly:
-
+```bash
+python stratusscan.py
 ```
+
+Navigate through the hierarchical menu to select resources:
+
+1. Choose a category (Compute, Storage, Network, IAM, Security, Cost)
+2. Select specific resource type or comprehensive report
+3. Choose region(s) to scan
+4. Wait for export to complete
+5. Find your Excel file in `output/` directory
+
+### Direct Script Execution
+
+Run individual export scripts directly:
+
+```bash
 python scripts/ec2-export.py
+python scripts/vpc-data-export.py
+python scripts/iam-comprehensive-export.py
 ```
 
-Each script will prompt for any required information and save its output to the `output` directory.
+Each script will prompt for required information and save output to `output/`.
 
-## AWS Permissions
+### Region Selection
 
-The scripts require read-only access to the AWS resources they're exporting. At a minimum, you'll need the following AWS permission policies:
+When prompted, choose:
+- **`all`**: Scan all AWS commercial regions
+- **Specific region**: e.g., `us-east-1`, `eu-west-1`, `ap-southeast-1`
 
-- **ReadOnlyAccess**: For general resource access
-- **IAMReadOnlyAccess**: For IAM-related exports
-- **AWSSupportAccess**: For Trusted Advisor access
-- **ComputeOptimizerReadOnlyAccess**: For Compute Optimizer recommendations
-- **CostOptimizationHubReadOnlyAccess**: For Cost Optimization Hub recommendations
-- **Billing and Cost Management Read Access**: For billing and cost data exports
+The tool validates regions and provides helpful error messages for invalid selections.
 
-### Recommended IAM Policy
+### Creating Export Archives
+
+After running multiple exports, create a zip archive:
+
+1. Select **Output Management** from the main menu
+2. Choose **Create Output Archive**
+3. Find the zip file in the root directory with format: `ACCOUNT-NAME-export-MM.DD.YYYY.zip`
+
+---
+
+## 🔐 AWS Permissions
+
+StratusScan requires **read-only** access to AWS resources.
+
+### Recommended IAM Policies
+
+Attach these AWS managed policies to your IAM user/role:
+
+- `ReadOnlyAccess` - General resource access
+- `IAMReadOnlyAccess` - IAM resources
+- `AWSSupportAccess` - Trusted Advisor (requires Business/Enterprise support)
+- `ComputeOptimizerReadOnlyAccess` - Compute Optimizer recommendations
+- `CostOptimizationHubReadOnlyAccess` - Cost recommendations
+
+### Custom IAM Policy
+
+For fine-grained control, use this custom policy:
+
+<details>
+<summary>Click to expand custom IAM policy</summary>
 
 ```json
 {
@@ -293,6 +244,10 @@ The scripts require read-only access to the AWS resources they're exporting. At 
                 "securityhub:Get*",
                 "securityhub:Describe*",
                 "securityhub:List*",
+                "route53:Get*",
+                "route53:List*",
+                "route53resolver:Get*",
+                "route53resolver:List*",
                 "ce:GetCostAndUsage",
                 "ce:GetCostForecast",
                 "ce:GetUsageReport",
@@ -310,45 +265,212 @@ The scripts require read-only access to the AWS resources they're exporting. At 
     ]
 }
 ```
+</details>
 
-## Troubleshooting
+---
+
+## 📦 Supported AWS Resources
+
+StratusScan supports **40+ AWS resource exporters** across multiple categories:
+
+<details>
+<summary><b>Compute Resources (5 exporters)</b></summary>
+
+- **EC2 Instances**: Detailed instance info including OS, size, cost calculations, network config
+- **ECS Clusters**: ECS cluster information, services, tasks, container instances
+- **EKS Clusters**: Kubernetes cluster information, node groups, configurations
+- **RDS Databases**: Database engine, size, storage, connection information
+- **Compute Resources (All-in-One)**: Combined report of all compute resources
+
+</details>
+
+<details>
+<summary><b>Storage Resources (4 exporters)</b></summary>
+
+- **EBS Volumes**: Volume IDs, size, state, attachment info, pricing
+- **EBS Snapshots**: Snapshot IDs, size, encryption status, creation dates
+- **S3 Buckets**: Bucket information including size, object count, region, configuration
+- **Storage Resources (All-in-One)**: Combined report of all storage resources
+
+</details>
+
+<details>
+<summary><b>Network Resources (7 exporters)</b></summary>
+
+- **VPC Resources**: VPCs, subnets, NAT gateways, peering connections, Elastic IPs
+- **Route 53**: Hosted zones, DNS records, resolver endpoints/rules, query logging
+- **Elastic Load Balancers**: Classic, Application, and Network load balancers
+- **Security Groups**: Group details, inbound/outbound rules, resource associations
+- **Network ACLs**: NACL rules, subnet associations, configurations
+- **Route Tables**: Route table information, routes, subnet associations
+- **Network Resources (All-in-One)**: Combined report of all network resources
+
+</details>
+
+<details>
+<summary><b>IAM & Identity Resources (9 exporters)</b></summary>
+
+- **IAM Comprehensive**: Complete IAM analysis (users, roles, policies, permissions)
+- **IAM Users**: Basic user information and access keys
+- **IAM Roles**: Role details, trust policies, attached permissions
+- **IAM Policies**: Detailed policy analysis with risk assessment
+- **IAM Identity Center Users**: AWS SSO/Identity Center users and assignments
+- **IAM Identity Center Groups**: Group memberships and assignments
+- **IAM Identity Center Permission Sets**: Permission set configurations
+- **IAM Identity Center Comprehensive**: Complete Identity Center analysis
+- **AWS Organizations**: Organizations structure, accounts, organizational units
+
+</details>
+
+<details>
+<summary><b>Security Resources (2 exporters)</b></summary>
+
+- **Security Hub**: Security findings, compliance status, remediation guidance
+- **Services in Use**: Analysis of AWS services currently in use
+
+</details>
+
+<details>
+<summary><b>Cost Optimization Resources (4 exporters)</b></summary>
+
+- **Billing Export**: AWS billing and cost data
+- **Cost Optimization Hub**: Recommendations and savings opportunities
+- **Compute Optimizer**: Recommendations for EC2, Auto Scaling, EBS, Lambda
+- **Trusted Advisor**: Cost optimization checks and recommendations (requires Business+ support)
+
+</details>
+
+---
+
+## 📂 Output Files
+
+### File Naming Convention
+
+All exports follow a consistent naming pattern:
+
+```
+{ACCOUNT-NAME}-{RESOURCE-TYPE}-{REGION}-export-{MM.DD.YYYY}.xlsx
+```
+
+**Examples:**
+- `PROD-ACCOUNT-ec2-us-east-1-export-10.27.2025.xlsx`
+- `DEV-ACCOUNT-route53-all-export-10.27.2025.xlsx`
+- `PROD-ACCOUNT-iam-comprehensive-export-10.27.2025.xlsx`
+
+**Archive:**
+- `ACCOUNT-NAME-export-MM.DD.YYYY.zip`
+
+### Directory Structure
+
+```
+StratusScan-CLI/
+├── stratusscan.py              # Main menu interface
+├── configure.py                # Configuration wizard
+├── utils.py                    # Shared utilities
+├── config.json                 # Configuration file
+├── README.md                   # This file
+├── LICENSE                     # License information
+├── reference/                  # Pricing data
+│   ├── ec2-pricing.csv
+│   └── ebsvol-pricing.csv
+├── scripts/                    # Export scripts (40+)
+│   ├── ec2-export.py
+│   ├── route53-export.py
+│   ├── iam-comprehensive-export.py
+│   └── ... (and many more)
+├── logs/                       # Execution logs
+│   └── logs-{script}-{timestamp}.log
+└── output/                     # Export files
+    └── {exports}.xlsx
+```
+
+---
+
+## 🐛 Troubleshooting
 
 ### Common Issues
 
 **Missing Dependencies**
-- Run `pip install boto3 pandas openpyxl` or let the script install them automatically when prompted
+```bash
+# Install required packages
+pip install boto3 pandas openpyxl
+```
+
+**AWS Credentials Not Found**
+```bash
+# Configure AWS CLI
+aws configure
+
+# Or set environment variables
+export AWS_ACCESS_KEY_ID="your-key"
+export AWS_SECRET_ACCESS_KEY="your-secret"
+```
+
+**Permission Denied Errors**
+- Ensure your IAM user/role has read-only access to AWS resources
+- Verify you have the necessary policies attached ([see permissions](#-aws-permissions))
+- For Trusted Advisor: Requires AWS Business or Enterprise Support plan
 
 **Invalid Region Errors**
-- Ensure you're using valid AWS commercial regions
-- The script validates regions and provides helpful error messages
+- Use valid AWS commercial region codes (e.g., `us-east-1`, not `us-east-1a`)
+- Type `all` to scan all regions
+- The tool validates regions and provides helpful error messages
 
-**Service Not Available Errors**
-- Some services may have limited availability in certain regions
-- Check the service availability in your specific AWS regions
+**Service Not Available**
+- Some services have limited regional availability
+- Check AWS service availability in your specific region
+- Try running the export in `us-east-1` which has the broadest service availability
 
-**Permissions Issues**
-- Ensure your IAM user/role has the necessary read permissions
-- Work with your security team to ensure proper access
+**Excel Export Errors**
+- Ensure `openpyxl` is installed: `pip install openpyxl`
+- Check disk space in the `output/` directory
+- Verify write permissions to the StratusScan directory
 
 ### Getting Help
 
-1. Check the script output for specific error messages
-2. Verify your AWS credentials and permissions
+1. Check the log files in `logs/` directory for detailed error messages
+2. Verify your AWS credentials: `aws sts get-caller-identity`
 3. Ensure you're using valid AWS regions
-4. Review the configuration file for any service-specific settings
+4. Review the `config.json` file for any misconfigurations
+5. Run `python configure.py --perms` to validate AWS permissions
 
-## File Naming Conventions
+---
 
-All exported files follow this naming convention:
+## 🤝 Contributing
 
-- Single resource: `ACCOUNT-NAME-RESOURCE-TYPE-export-MM.DD.YYYY.xlsx`
-- With suffix: `ACCOUNT-NAME-RESOURCE-TYPE-SUFFIX-export-MM.DD.YYYY.xlsx`
-- Archive: `ACCOUNT-NAME-export-MM.DD.YYYY.zip`
+Contributions are welcome! Here's how you can help:
 
-This naming convention helps maintain audit trails and clearly identifies exports.
+- **Report bugs**: Open an issue with details and reproduction steps
+- **Suggest features**: Share ideas for new AWS resource exporters
+- **Submit PRs**: Add new exporters following the existing patterns in `scripts/`
+- **Improve docs**: Help make the documentation clearer
 
-## Support and Compliance
+### Adding a New Exporter
 
-This tool is designed to work within AWS Commercial environments. Always verify that your use of this tool complies with your organization's security policies and any applicable regulations.
+1. Create a new script in `scripts/` following the existing pattern (see `route53-export.py` as reference)
+2. Import and use the `utils` module for consistency
+3. Add your script to the menu in `stratusscan.py`
+4. Test thoroughly across multiple regions
+5. Submit a pull request
 
-For questions about specific features or compliance considerations, consult with your organization's cloud security team.
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- Built with assistance from [Claude Code](https://claude.ai/code)
+- Powered by [AWS SDK for Python (Boto3)](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html)
+- Excel export using [pandas](https://pandas.pydata.org/) and [openpyxl](https://openpyxl.readthedocs.io/)
+
+---
+
+## 📞 Support
+
+For questions, issues, or feature requests, please open an issue on GitHub.
+
+**Note**: This tool is designed for AWS Commercial environments. Always verify compliance with your organization's security policies and applicable regulations before use.
