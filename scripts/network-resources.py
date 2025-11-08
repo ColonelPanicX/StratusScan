@@ -94,6 +94,7 @@ def check_dependencies():
 
     return True
 
+@utils.aws_error_handler("Getting account information", default_return=("Unknown", "Unknown-AWS-Account"))
 def get_account_info():
     """
     Get the current AWS account ID and name with AWS validation.
@@ -101,18 +102,14 @@ def get_account_info():
     Returns:
         tuple: (account_id, account_name)
     """
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
+    sts = utils.get_boto3_client('sts')
+    account_id = sts.get_caller_identity()['Account']
 
-        # Validate AWS environment
-        caller_arn = sts.get_caller_identity()['Arn']
-        account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
+    # Validate AWS environment
+    caller_arn = sts.get_caller_identity()['Arn']
+    account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
 
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
+    return account_id, account_name
 
 def print_title():
     """
@@ -374,7 +371,7 @@ def estimate_network_complexity():
         }
 
         # Try to get a rough count of network resources
-        ec2_client = boto3.client('ec2', region_name='us-west-2')
+        ec2_client = utils.get_boto3_client('ec2', region_name='us-west-2')
 
         try:
             # Quick count of VPCs to estimate complexity
@@ -415,7 +412,7 @@ def main():
 
         try:
             # Test AWS credentials
-            sts = boto3.client('sts')
+            sts = utils.get_boto3_client('sts')
             sts.get_caller_identity()
             utils.log_success("AWS credentials validated")
 
@@ -516,9 +513,6 @@ def main():
                     'duration': execution_time
                 }
                 utils.log_error(f"{script_info['name']} failed after {execution_time:.1f} seconds")
-
-            # Small delay between scripts
-            time.sleep(2)
 
         # Summary of individual exports
         total_time = (datetime.datetime.now() - start_time).total_seconds()

@@ -18,13 +18,9 @@ Collected information includes: Group details, member counts, external IDs, crea
 and modification timestamps for comprehensive group governance analysis.
 """
 
-import os
 import sys
-import boto3
 import datetime
-import time
 from pathlib import Path
-from botocore.exceptions import ClientError, NoCredentialsError
 
 # Add path to import utils module
 try:
@@ -49,62 +45,6 @@ except ImportError:
         print("ERROR: Could not import the utils module. Make sure utils.py is in the StratusScan directory.")
         sys.exit(1)
 
-def check_dependencies():
-    """
-    Check if required dependencies are installed and offer to install them if missing.
-
-    Returns:
-        bool: True if all dependencies are satisfied, False otherwise
-    """
-    required_packages = ['pandas', 'openpyxl']
-    missing_packages = []
-
-    for package in required_packages:
-        try:
-            __import__(package)
-            utils.log_info(f"[OK] {package} is already installed")
-        except ImportError:
-            missing_packages.append(package)
-
-    if missing_packages:
-        utils.log_warning(f"Packages required but not installed: {', '.join(missing_packages)}")
-        response = input("Would you like to install these packages now? (y/n): ").lower().strip()
-
-        if response == 'y':
-            import subprocess
-            for package in missing_packages:
-                utils.log_info(f"Installing {package}...")
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                    utils.log_success(f"{package} installed successfully")
-                except subprocess.CalledProcessError as e:
-                    utils.log_error(f"Error installing {package}", e)
-                    return False
-        else:
-            print("Cannot continue without required packages. Exiting.")
-            return False
-
-    return True
-
-def get_account_info():
-    """
-    Get the current AWS account ID and name with AWS validation.
-
-    Returns:
-        tuple: (account_id, account_name)
-    """
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
-
-        # Validate AWS environment
-        caller_arn = sts.get_caller_identity()['Arn']
-        account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
-
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
 
 def print_title():
     """
@@ -123,13 +63,14 @@ def print_title():
     print("====================================================================")
 
     # Get account information
-    account_id, account_name = get_account_info()
+    account_id, account_name = utils.get_account_info()
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")
 
     return account_id, account_name
 
+@utils.aws_error_handler("Getting IAM Identity Center instance", default_return=(None, None))
 def get_identity_center_instance():
     """
     Get the IAM Identity Center instance ARN and Identity Store ID.
@@ -137,39 +78,26 @@ def get_identity_center_instance():
     Returns:
         tuple: (instance_arn, identity_store_id) or (None, None) if not configured
     """
-    try:
-        sso_admin_client = boto3.client('sso-admin', region_name='us-west-2')
+    sso_admin_client = utils.get_boto3_client('sso-admin', region_name='us-west-2')
 
-        # List Identity Center instances
-        response = sso_admin_client.list_instances()
-        instances = response.get('Instances', [])
+    # List Identity Center instances
+    response = sso_admin_client.list_instances()
+    instances = response.get('Instances', [])
 
-        if not instances:
-            utils.log_warning("No IAM Identity Center instances found in this account.")
-            utils.log_info("IAM Identity Center may not be enabled or configured.")
-            return None, None
-
-        # Use the first instance (typically there's only one)
-        instance = instances[0]
-        instance_arn = instance['InstanceArn']
-        identity_store_id = instance['IdentityStoreId']
-
-        utils.log_success(f"Found IAM Identity Center instance: {instance_arn}")
-        return instance_arn, identity_store_id
-
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        if error_code == 'AccessDeniedException':
-            utils.log_error("Access denied to IAM Identity Center. Check permissions.")
-        elif error_code == 'ResourceNotFoundException':
-            utils.log_warning("IAM Identity Center not found or not enabled in this account.")
-        else:
-            utils.log_error(f"Error accessing IAM Identity Center: {e}")
-        return None, None
-    except Exception as e:
-        utils.log_error("Error getting Identity Center instance", e)
+    if not instances:
+        utils.log_warning("No IAM Identity Center instances found in this account.")
+        utils.log_info("IAM Identity Center may not be enabled or configured.")
         return None, None
 
+    # Use the first instance (typically there's only one)
+    instance = instances[0]
+    instance_arn = instance['InstanceArn']
+    identity_store_id = instance['IdentityStoreId']
+
+    utils.log_success(f"Found IAM Identity Center instance: {instance_arn}")
+    return instance_arn, identity_store_id
+
+@utils.aws_error_handler("Getting group members", default_return=[])
 def get_group_members(identitystore_client, identity_store_id, group_id):
     """
     Get detailed member information for a group.
@@ -183,60 +111,57 @@ def get_group_members(identitystore_client, identity_store_id, group_id):
         list: List of member details
     """
     members = []
-    try:
-        paginator = identitystore_client.get_paginator('list_group_memberships')
+    paginator = identitystore_client.get_paginator('list_group_memberships')
 
-        for page in paginator.paginate(
-            IdentityStoreId=identity_store_id,
-            GroupId=group_id
-        ):
-            for membership in page.get('GroupMemberships', []):
-                member_id = membership['MemberId']
+    for page in paginator.paginate(
+        IdentityStoreId=identity_store_id,
+        GroupId=group_id
+    ):
+        for membership in page.get('GroupMemberships', []):
+            member_id = membership['MemberId']
 
-                # Get member details
-                if 'UserId' in member_id:
-                    try:
-                        user_response = identitystore_client.describe_user(
-                            IdentityStoreId=identity_store_id,
-                            UserId=member_id['UserId']
-                        )
-                        member_name = user_response.get('UserName', member_id['UserId'])
-                        member_type = 'User'
-                        display_name = user_response.get('DisplayName', 'N/A')
-                    except Exception:
-                        member_name = member_id['UserId']
-                        member_type = 'User'
-                        display_name = 'N/A'
-                elif 'GroupId' in member_id:
-                    try:
-                        group_response = identitystore_client.describe_group(
-                            IdentityStoreId=identity_store_id,
-                            GroupId=member_id['GroupId']
-                        )
-                        member_name = group_response.get('DisplayName', member_id['GroupId'])
-                        member_type = 'Group'
-                        display_name = group_response.get('DisplayName', 'N/A')
-                    except Exception:
-                        member_name = member_id['GroupId']
-                        member_type = 'Group'
-                        display_name = 'N/A'
-                else:
-                    member_name = 'Unknown'
-                    member_type = 'Unknown'
+            # Get member details
+            if 'UserId' in member_id:
+                try:
+                    user_response = identitystore_client.describe_user(
+                        IdentityStoreId=identity_store_id,
+                        UserId=member_id['UserId']
+                    )
+                    member_name = user_response.get('UserName', member_id['UserId'])
+                    member_type = 'User'
+                    display_name = user_response.get('DisplayName', 'N/A')
+                except Exception:
+                    member_name = member_id['UserId']
+                    member_type = 'User'
                     display_name = 'N/A'
+            elif 'GroupId' in member_id:
+                try:
+                    group_response = identitystore_client.describe_group(
+                        IdentityStoreId=identity_store_id,
+                        GroupId=member_id['GroupId']
+                    )
+                    member_name = group_response.get('DisplayName', member_id['GroupId'])
+                    member_type = 'Group'
+                    display_name = group_response.get('DisplayName', 'N/A')
+                except Exception:
+                    member_name = member_id['GroupId']
+                    member_type = 'Group'
+                    display_name = 'N/A'
+            else:
+                member_name = 'Unknown'
+                member_type = 'Unknown'
+                display_name = 'N/A'
 
-                members.append({
-                    'name': member_name,
-                    'type': member_type,
-                    'display_name': display_name,
-                    'membership_id': membership.get('MembershipId', 'N/A')
-                })
-
-    except Exception as e:
-        utils.log_warning(f"Could not get members for group {group_id}: {e}")
+            members.append({
+                'name': member_name,
+                'type': member_type,
+                'display_name': display_name,
+                'membership_id': membership.get('MembershipId', 'N/A')
+            })
 
     return members
 
+@utils.aws_error_handler("Collecting Identity Center groups", default_return=[])
 def collect_identity_center_groups(identity_store_id):
     """
     Collect IAM Identity Center groups with detailed information.
@@ -252,73 +177,66 @@ def collect_identity_center_groups(identity_store_id):
 
     groups_data = []
 
-    try:
-        identitystore_client = boto3.client('identitystore', region_name='us-west-2')
+    identitystore_client = utils.get_boto3_client('identitystore', region_name='us-west-2')
 
-        # Get all groups using pagination
-        paginator = identitystore_client.get_paginator('list_groups')
+    # Get all groups using pagination
+    paginator = identitystore_client.get_paginator('list_groups')
 
-        # Count total groups first for progress tracking
-        total_groups = 0
-        for page in paginator.paginate(IdentityStoreId=identity_store_id):
-            total_groups += len(page.get('Groups', []))
+    # Count total groups first for progress tracking
+    total_groups = 0
+    for page in paginator.paginate(IdentityStoreId=identity_store_id):
+        total_groups += len(page.get('Groups', []))
 
-        if total_groups > 0:
-            utils.log_info(f"Found {total_groups} Identity Center groups to process")
-        else:
-            utils.log_warning("No Identity Center groups found")
-            return []
+    if total_groups > 0:
+        utils.log_info(f"Found {total_groups} Identity Center groups to process")
+    else:
+        utils.log_warning("No Identity Center groups found")
+        return []
 
-        # Reset paginator and process groups
-        paginator = identitystore_client.get_paginator('list_groups')
-        processed = 0
+    # Reset paginator and process groups
+    paginator = identitystore_client.get_paginator('list_groups')
+    processed = 0
 
-        for page in paginator.paginate(IdentityStoreId=identity_store_id):
-            groups = page.get('Groups', [])
+    for page in paginator.paginate(IdentityStoreId=identity_store_id):
+        groups = page.get('Groups', [])
 
-            for group in groups:
-                processed += 1
-                progress = (processed / total_groups) * 100 if total_groups > 0 else 0
-                group_name = group.get('DisplayName', 'Unknown')
+        for group in groups:
+            processed += 1
+            progress = (processed / total_groups) * 100 if total_groups > 0 else 0
+            group_name = group.get('DisplayName', 'Unknown')
 
-                utils.log_info(f"[{progress:.1f}%] Processing group {processed}/{total_groups}: {group_name}")
+            utils.log_info(f"[{progress:.1f}%] Processing group {processed}/{total_groups}: {group_name}")
 
-                # Get detailed group member information
-                members = get_group_members(identitystore_client, identity_store_id, group['GroupId'])
+            # Get detailed group member information
+            members = get_group_members(identitystore_client, identity_store_id, group['GroupId'])
 
-                # Format member information
-                member_names = [m['name'] for m in members]
-                member_types = [m['type'] for m in members]
-                user_members = [m['name'] for m in members if m['type'] == 'User']
-                group_members = [m['name'] for m in members if m['type'] == 'Group']
+            # Format member information
+            member_names = [m['name'] for m in members]
+            member_types = [m['type'] for m in members]
+            user_members = [m['name'] for m in members if m['type'] == 'User']
+            group_members = [m['name'] for m in members if m['type'] == 'Group']
 
-                # Get external ID
-                external_ids = group.get('ExternalIds', [])
-                external_id = external_ids[0].get('Id', 'N/A') if external_ids else 'N/A'
+            # Get external ID
+            external_ids = group.get('ExternalIds', [])
+            external_id = external_ids[0].get('Id', 'N/A') if external_ids else 'N/A'
 
-                group_info = {
-                    'Group ID': group.get('GroupId', 'N/A'),
-                    'Group Name': group.get('DisplayName', 'N/A'),
-                    'Description': group.get('Description', 'N/A'),
-                    'External ID': external_id,
-                    'Total Members': len(members),
-                    'User Members': len(user_members),
-                    'Group Members': len(group_members),
-                    'Member Names': ', '.join(member_names) if member_names else 'None',
-                    'User Member Names': ', '.join(user_members) if user_members else 'None',
-                    'Group Member Names': ', '.join(group_members) if group_members else 'None',
-                    'Created Date': group.get('Meta', {}).get('Created', 'N/A'),
-                    'Last Modified': group.get('Meta', {}).get('LastModified', 'N/A'),
-                    'Resource Version': group.get('Meta', {}).get('ResourceType', 'N/A')
-                }
+            group_info = {
+                'Group ID': group.get('GroupId', 'N/A'),
+                'Group Name': group.get('DisplayName', 'N/A'),
+                'Description': group.get('Description', 'N/A'),
+                'External ID': external_id,
+                'Total Members': len(members),
+                'User Members': len(user_members),
+                'Group Members': len(group_members),
+                'Member Names': ', '.join(member_names) if member_names else 'None',
+                'User Member Names': ', '.join(user_members) if user_members else 'None',
+                'Group Member Names': ', '.join(group_members) if group_members else 'None',
+                'Created Date': group.get('Meta', {}).get('Created', 'N/A'),
+                'Last Modified': group.get('Meta', {}).get('LastModified', 'N/A'),
+                'Resource Version': group.get('Meta', {}).get('ResourceType', 'N/A')
+            }
 
-                groups_data.append(group_info)
-
-                # Small delay to avoid API throttling
-                time.sleep(0.1)
-
-    except Exception as e:
-        utils.log_error("Error collecting Identity Center groups", e)
+            groups_data.append(group_info)
 
     return groups_data
 
@@ -356,6 +274,9 @@ def export_to_excel(groups_data, account_id, account_name):
         # Create data frame
         groups_df = pd.DataFrame(groups_data)
 
+        # Apply security sanitization to all DataFrames
+        groups_df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(groups_df))
+
         # Create summary data
         total_groups = len(groups_data)
         total_members = sum(group.get('Total Members', 0) for group in groups_data)
@@ -388,6 +309,9 @@ def export_to_excel(groups_data, account_id, account_name):
 
         summary_df = pd.DataFrame(summary_data)
 
+        # Apply security sanitization to summary DataFrame
+        summary_df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(summary_df))
+
         # Prepare data frames for multi-sheet export
         data_frames = {
             'Groups Summary': summary_df,
@@ -416,7 +340,7 @@ def main():
     """
     try:
         # Check dependencies first
-        if not check_dependencies():
+        if not utils.ensure_dependencies('pandas', 'openpyxl'):
             return
 
         # Import pandas after dependency check
@@ -424,22 +348,6 @@ def main():
 
         # Print title and get account info
         account_id, account_name = print_title()
-
-        try:
-            # Test AWS credentials
-            sts = boto3.client('sts')
-            sts.get_caller_identity()
-            utils.log_success("AWS credentials validated")
-
-        except NoCredentialsError:
-            utils.log_error("AWS credentials not found. Please configure your credentials using:")
-            print("  - AWS CLI: aws configure")
-            print("  - Environment variables: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
-            print("  - IAM role (if running on EC2)")
-            return
-        except Exception as e:
-            utils.log_error("Error validating AWS credentials", e)
-            return
 
         utils.log_info("Starting IAM Identity Center groups collection from AWS...")
         print("====================================================================")

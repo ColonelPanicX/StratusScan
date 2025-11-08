@@ -53,19 +53,19 @@ def print_title_screen():
     """
     # Get the AWS account ID using STS
     try:
-        sts_client = boto3.client('sts')
+        sts_client = utils.get_boto3_client('sts')
         account_id = sts_client.get_caller_identity()['Account']
-        
+
         # Get the corresponding account name from utils module
         account_name = utils.get_account_name(account_id, default="UNKNOWN-ACCOUNT")
     except Exception as e:
         utils.log_error("Unable to determine AWS account ID", e)
         account_id = "UNKNOWN"
         account_name = "UNKNOWN-ACCOUNT"
-    
+
     # Print the title screen with account information
     print("====================================================================")
-    print("                   AWS RESOURCE SCANNER                            ")    
+    print("                   AWS RESOURCE SCANNER                            ")
     print("====================================================================")
     print("AWS ELB INVENTORY EXPORT SCRIPT")
     print("====================================================================")
@@ -75,7 +75,7 @@ def print_title_screen():
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")
-    
+
     return account_name
 
 def check_dependencies():
@@ -150,6 +150,7 @@ def is_valid_aws_region(region_name):
     """
     return utils.validate_aws_region(region_name)
 
+@utils.aws_error_handler("Fetching security group names", default_return={})
 def get_security_group_names(security_group_ids, region):
     """
     Get security group names for the given IDs
@@ -168,23 +169,20 @@ def get_security_group_names(security_group_ids, region):
     if not utils.validate_aws_region(region):
         utils.log_error(f"Invalid AWS region: {region}")
         return {}
-        
-    ec2 = boto3.client('ec2', region_name=region)
+
+    ec2 = utils.get_boto3_client('ec2', region_name=region)
     sg_mapping = {}
-    
-    try:
-        # Fetch security group information
-        response = ec2.describe_security_groups(GroupIds=security_group_ids)
-        
-        # Create a mapping of security group IDs to names
-        for sg in response['SecurityGroups']:
-            sg_mapping[sg['GroupId']] = sg['GroupName']
-            
-    except Exception as e:
-        utils.log_warning(f"Unable to fetch security group names in {region}: {str(e)}")
-    
+
+    # Fetch security group information
+    response = ec2.describe_security_groups(GroupIds=security_group_ids)
+
+    # Create a mapping of security group IDs to names
+    for sg in response['SecurityGroups']:
+        sg_mapping[sg['GroupId']] = sg['GroupName']
+
     return sg_mapping
 
+@utils.aws_error_handler("Collecting Classic Load Balancers", default_return=[])
 def get_classic_load_balancers(region):
     """
     Get information about Classic Load Balancers in the specified AWS region
@@ -199,69 +197,66 @@ def get_classic_load_balancers(region):
     if not utils.validate_aws_region(region):
         utils.log_error(f"Invalid AWS region: {region}")
         return []
-    
+
     elb_data = []
-    
-    try:
-        # Create an ELB client for the specified region
-        elb = boto3.client('elb', region_name=region)
-        
-        # Describe all Classic Load Balancers
-        response = elb.describe_load_balancers()
-        
-        for lb in response.get('LoadBalancerDescriptions', []):
-            # Get security group names for the security group IDs
-            sg_ids = lb.get('SecurityGroups', [])
-            sg_mapping = get_security_group_names(sg_ids, region)
-            
-            # Format security groups as "sg-name (sg-id), ..."
-            security_groups = []
-            for sg_id in sg_ids:
-                sg_name = sg_mapping.get(sg_id, "Unknown")
-                security_groups.append(f"{sg_name} ({sg_id})")
-            
-            # Format availability zones as "subnet-id (az), ..."
-            availability_zones = []
-            for az in lb.get('AvailabilityZones', []):
-                availability_zones.append(f"{az}")
-            
-            # Add subnets if available (VPC Classic ELB)
-            for subnet_id in lb.get('Subnets', []):
-                # For VPC Classic ELBs, we need to get the AZ for each subnet
-                try:
-                    ec2 = boto3.client('ec2', region_name=region)
-                    subnet_response = ec2.describe_subnets(SubnetIds=[subnet_id])
-                    subnet_az = subnet_response['Subnets'][0]['AvailabilityZone']
-                    availability_zones.append(f"{subnet_id} ({subnet_az})")
-                except Exception as e:
-                    utils.log_warning(f"Could not get AZ for subnet {subnet_id}: {e}")
-                    availability_zones.append(f"{subnet_id} (Unknown AZ)")
-            
-            # Get creation time
-            created_time = lb.get('CreatedTime', datetime.datetime.now())
-            
-            # Get owner information
-            owner_id = lb.get('OwnerId', 'N/A')
-            owner_name = utils.get_account_name_formatted(owner_id)
-            
-            # Add load balancer data to the list
-            elb_data.append({
-                'Region': region,
-                'Name': lb.get('LoadBalancerName', ''),
-                'DNS Name': lb.get('DNSName', ''),
-                'VPC ID': lb.get('VPCId', 'N/A'),
-                'Availability Zones': ', '.join(availability_zones),
-                'Type': 'Classic',
-                'Date Created': created_time.strftime('%Y-%m-%d'),
-                'Security Groups': ', '.join(security_groups) if security_groups else 'N/A',
-                'Owner': owner_name
-            })
-            
-    except Exception as e:
-        utils.log_warning(f"Unable to fetch Classic Load Balancers in AWS region {region}: {str(e)}")
-    
+
+    # Create an ELB client for the specified region
+    elb = utils.get_boto3_client('elb', region_name=region)
+
+    # Describe all Classic Load Balancers
+    response = elb.describe_load_balancers()
+
+    for lb in response.get('LoadBalancerDescriptions', []):
+        # Get security group names for the security group IDs
+        sg_ids = lb.get('SecurityGroups', [])
+        sg_mapping = get_security_group_names(sg_ids, region)
+
+        # Format security groups as "sg-name (sg-id), ..."
+        security_groups = []
+        for sg_id in sg_ids:
+            sg_name = sg_mapping.get(sg_id, "Unknown")
+            security_groups.append(f"{sg_name} ({sg_id})")
+
+        # Format availability zones as "subnet-id (az), ..."
+        availability_zones = []
+        for az in lb.get('AvailabilityZones', []):
+            availability_zones.append(f"{az}")
+
+        # Add subnets if available (VPC Classic ELB)
+        for subnet_id in lb.get('Subnets', []):
+            # For VPC Classic ELBs, we need to get the AZ for each subnet
+            try:
+                ec2 = utils.get_boto3_client('ec2', region_name=region)
+                subnet_response = ec2.describe_subnets(SubnetIds=[subnet_id])
+                subnet_az = subnet_response['Subnets'][0]['AvailabilityZone']
+                availability_zones.append(f"{subnet_id} ({subnet_az})")
+            except Exception as e:
+                utils.log_warning(f"Could not get AZ for subnet {subnet_id}: {e}")
+                availability_zones.append(f"{subnet_id} (Unknown AZ)")
+
+        # Get creation time
+        created_time = lb.get('CreatedTime', datetime.datetime.now())
+
+        # Get owner information
+        owner_id = lb.get('OwnerId', 'N/A')
+        owner_name = utils.get_account_name_formatted(owner_id)
+
+        # Add load balancer data to the list
+        elb_data.append({
+            'Region': region,
+            'Name': lb.get('LoadBalancerName', ''),
+            'DNS Name': lb.get('DNSName', ''),
+            'VPC ID': lb.get('VPCId', 'N/A'),
+            'Availability Zones': ', '.join(availability_zones),
+            'Type': 'Classic',
+            'Date Created': created_time.strftime('%Y-%m-%d'),
+            'Security Groups': ', '.join(security_groups) if security_groups else 'N/A',
+            'Owner': owner_name
+        })
+
     return elb_data
 
+@utils.aws_error_handler("Collecting Application and Network Load Balancers", default_return=[])
 def get_application_network_load_balancers(region):
     """
     Get information about Application and Network Load Balancers in the specified AWS region
@@ -276,72 +271,68 @@ def get_application_network_load_balancers(region):
     if not utils.validate_aws_region(region):
         utils.log_error(f"Invalid AWS region: {region}")
         return []
-    
+
     elb_data = []
-    
-    try:
-        # Create an ELBv2 client for the specified region
-        elbv2 = boto3.client('elbv2', region_name=region)
-        
-        # Describe all ALBs and NLBs
-        response = elbv2.describe_load_balancers()
-        
-        for lb in response.get('LoadBalancers', []):
-            # Get load balancer type
-            lb_type = lb.get('Type', 'Unknown')
-            
-            # Get security group names for ALBs (NLBs don't have security groups)
-            sg_ids = lb.get('SecurityGroups', [])
-            security_groups = []
-            
-            if sg_ids:
-                sg_mapping = get_security_group_names(sg_ids, region)
-                for sg_id in sg_ids:
-                    sg_name = sg_mapping.get(sg_id, "Unknown")
-                    security_groups.append(f"{sg_name} ({sg_id})")
-            
-            # Get subnet information
-            availability_zones = []
-            for az_info in lb.get('AvailabilityZones', []):
-                subnet_id = az_info.get('SubnetId', '')
-                zone_name = az_info.get('ZoneName', '')
-                availability_zones.append(f"{subnet_id} ({zone_name})")
-            
-            # Get creation time
-            created_time = lb.get('CreatedTime', datetime.datetime.now())
-            
-            # Get owner information from the ARN
-            lb_arn = lb.get('LoadBalancerArn', '')
-            if lb_arn:
-                # Parse owner from ARN
-                try:
-                    arn_parts = lb_arn.split(':')
-                    if len(arn_parts) >= 5:
-                        owner_id = arn_parts[4]
-                        owner_name = utils.get_account_name_formatted(owner_id)
-                    else:
-                        owner_name = 'N/A'
-                except Exception:
+
+    # Create an ELBv2 client for the specified region
+    elbv2 = utils.get_boto3_client('elbv2', region_name=region)
+
+    # Describe all ALBs and NLBs
+    response = elbv2.describe_load_balancers()
+
+    for lb in response.get('LoadBalancers', []):
+        # Get load balancer type
+        lb_type = lb.get('Type', 'Unknown')
+
+        # Get security group names for ALBs (NLBs don't have security groups)
+        sg_ids = lb.get('SecurityGroups', [])
+        security_groups = []
+
+        if sg_ids:
+            sg_mapping = get_security_group_names(sg_ids, region)
+            for sg_id in sg_ids:
+                sg_name = sg_mapping.get(sg_id, "Unknown")
+                security_groups.append(f"{sg_name} ({sg_id})")
+
+        # Get subnet information
+        availability_zones = []
+        for az_info in lb.get('AvailabilityZones', []):
+            subnet_id = az_info.get('SubnetId', '')
+            zone_name = az_info.get('ZoneName', '')
+            availability_zones.append(f"{subnet_id} ({zone_name})")
+
+        # Get creation time
+        created_time = lb.get('CreatedTime', datetime.datetime.now())
+
+        # Get owner information from the ARN
+        lb_arn = lb.get('LoadBalancerArn', '')
+        if lb_arn:
+            # Parse owner from ARN
+            try:
+                arn_parts = lb_arn.split(':')
+                if len(arn_parts) >= 5:
+                    owner_id = arn_parts[4]
+                    owner_name = utils.get_account_name_formatted(owner_id)
+                else:
                     owner_name = 'N/A'
-            else:
+            except Exception:
                 owner_name = 'N/A'
-            
-            # Add load balancer data to the list
-            elb_data.append({
-                'Region': region,
-                'Name': lb.get('LoadBalancerName', ''),
-                'DNS Name': lb.get('DNSName', ''),
-                'VPC ID': lb.get('VpcId', 'N/A'),
-                'Availability Zones': ', '.join(availability_zones),
-                'Type': lb_type,
-                'Date Created': created_time.strftime('%Y-%m-%d'),
-                'Security Groups': ', '.join(security_groups) if security_groups else 'N/A',
-                'Owner': owner_name
-            })
-            
-    except Exception as e:
-        utils.log_warning(f"Unable to fetch ALBs/NLBs in AWS region {region}: {str(e)}")
-    
+        else:
+            owner_name = 'N/A'
+
+        # Add load balancer data to the list
+        elb_data.append({
+            'Region': region,
+            'Name': lb.get('LoadBalancerName', ''),
+            'DNS Name': lb.get('DNSName', ''),
+            'VPC ID': lb.get('VpcId', 'N/A'),
+            'Availability Zones': ', '.join(availability_zones),
+            'Type': lb_type,
+            'Date Created': created_time.strftime('%Y-%m-%d'),
+            'Security Groups': ', '.join(security_groups) if security_groups else 'N/A',
+            'Owner': owner_name
+        })
+
     return elb_data
 
 def main():

@@ -103,6 +103,7 @@ def check_dependencies():
     return True
 
 
+@utils.aws_error_handler("Getting account information", default_return=("Unknown", "Unknown-AWS-Account"))
 def get_account_info():
     """
     Get the current AWS account ID and name with AWS validation.
@@ -110,14 +111,10 @@ def get_account_info():
     Returns:
         tuple: (account_id, account_name)
     """
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
-        account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
+    sts = utils.get_boto3_client('sts')
+    account_id = sts.get_caller_identity()['Account']
+    account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
+    return account_id, account_name
 
 
 def print_title():
@@ -189,7 +186,7 @@ def get_os_info_from_ssm(instance_id, region):
     Returns the full OS version string or 'Unknown OS' if unavailable
     """
     try:
-        ssm = boto3.client('ssm', region_name=region)
+        ssm = utils.get_boto3_client('ssm', region_name=region)
 
         response = ssm.describe_instance_information(
             Filters=[{'Key': 'InstanceIds', 'Values': [instance_id]}]
@@ -483,7 +480,7 @@ def collect_ec2_data(region):
         utils.log_error(f"Invalid AWS region: {region}")
         return []
 
-    ec2 = boto3.client('ec2', region_name=region)
+    ec2 = utils.get_boto3_client('ec2', region_name=region)
     instances = []
 
     pricing_data = load_ec2_pricing_data()
@@ -607,9 +604,6 @@ def collect_ec2_data(region):
                 }
                 instances.append(instance_data)
 
-                if processed < total_instances:
-                    time.sleep(0.1)
-
     except Exception as e:
         utils.log_error(f"Error getting EC2 instances in region {region}", e)
 
@@ -627,7 +621,7 @@ def get_security_group_info(rds_client, sg_ids):
 
     try:
         region = rds_client.meta.region_name
-        ec2_client = boto3.client('ec2', region_name=region)
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
 
         response = ec2_client.describe_security_groups(GroupIds=sg_ids)
         sg_info = [f"{sg['GroupName']} ({sg['GroupId']})" for sg in response['SecurityGroups']]
@@ -644,7 +638,7 @@ def get_vpc_info(rds_client, vpc_id):
 
     try:
         region = rds_client.meta.region_name
-        ec2_client = boto3.client('ec2', region_name=region)
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
 
         response = ec2_client.describe_vpcs(VpcIds=[vpc_id])
         if response['Vpcs']:
@@ -775,7 +769,7 @@ def collect_rds_data(region):
     storage_pricing = load_storage_pricing_data()
 
     try:
-        rds_client = boto3.client('rds', region_name=region)
+        rds_client = utils.get_boto3_client('rds', region_name=region)
 
         paginator = rds_client.get_paginator('describe_db_instances')
         page_iterator = paginator.paginate()
@@ -905,9 +899,6 @@ def collect_rds_data(region):
                 }
 
                 rds_instances.append(instance_data)
-
-                if processed < total_instances:
-                    time.sleep(0.1)
 
         return rds_instances
     except botocore.exceptions.ClientError as e:
@@ -1172,7 +1163,7 @@ def collect_eks_data(region):
     addons_data = []
 
     try:
-        client = boto3.client('eks', region_name=region)
+        client = utils.get_boto3_client('eks', region_name=region)
 
         response = client.list_clusters()
         cluster_names = response.get('clusters', [])
@@ -1196,8 +1187,6 @@ def collect_eks_data(region):
 
             cluster_addons = collect_cluster_addons(client, cluster_name, region)
             addons_data.extend(cluster_addons)
-
-            time.sleep(0.1)
 
     except ClientError as e:
         error_code = e.response['Error']['Code']
@@ -1417,7 +1406,7 @@ def main():
 
         # Validate AWS credentials
         try:
-            sts = boto3.client('sts')
+            sts = utils.get_boto3_client('sts')
             sts.get_caller_identity()
             utils.log_success("AWS credentials validated")
 

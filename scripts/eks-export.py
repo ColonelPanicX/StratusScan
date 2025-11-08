@@ -94,6 +94,7 @@ def check_dependencies():
 
     return True
 
+@utils.aws_error_handler("Getting account information", default_return=("Unknown", "Unknown-AWS-Account"))
 def get_account_info():
     """
     Get the current AWS account ID and name with AWS validation.
@@ -101,18 +102,14 @@ def get_account_info():
     Returns:
         tuple: (account_id, account_name)
     """
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
+    sts = utils.get_boto3_client('sts')
+    account_id = sts.get_caller_identity()['Account']
 
-        # Validate AWS environment
-        caller_arn = sts.get_caller_identity()['Arn']
-        account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
+    # Validate AWS environment
+    caller_arn = sts.get_caller_identity()['Arn']
+    account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
 
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
+    return account_id, account_name
 
 def print_title():
     """
@@ -152,7 +149,7 @@ def get_available_regions():
     for region in aws_regions:
         try:
             # Test EKS availability by listing clusters
-            client = boto3.client('eks', region_name=region)
+            client = utils.get_boto3_client('eks', region_name=region)
             client.list_clusters(maxResults=1)
             available_regions.append(region)
         except ClientError as e:
@@ -167,6 +164,7 @@ def get_available_regions():
 
     return available_regions if available_regions else aws_regions  # Fallback to all AWS regions
 
+@utils.aws_error_handler("Collecting cluster details", default_return=None)
 def collect_cluster_details(client, cluster_name, region):
     """
     Collect detailed information about an EKS cluster.
@@ -179,82 +177,78 @@ def collect_cluster_details(client, cluster_name, region):
     Returns:
         dict: Dictionary containing cluster details
     """
-    try:
-        # Get cluster details
-        response = client.describe_cluster(name=cluster_name)
-        cluster = response['cluster']
+    # Get cluster details
+    response = client.describe_cluster(name=cluster_name)
+    cluster = response['cluster']
 
-        # Extract networking configuration
-        vpc_config = cluster.get('resourcesVpcConfig', {})
+    # Extract networking configuration
+    vpc_config = cluster.get('resourcesVpcConfig', {})
 
-        # Extract logging configuration
-        logging_config = cluster.get('logging', {})
-        log_types = logging_config.get('clusterLogging', [])
+    # Extract logging configuration
+    logging_config = cluster.get('logging', {})
+    log_types = logging_config.get('clusterLogging', [])
 
-        # Create log status dictionary
-        log_status = {
-            'api': 'Disabled',
-            'audit': 'Disabled',
-            'authenticator': 'Disabled',
-            'controllerManager': 'Disabled',
-            'scheduler': 'Disabled'
-        }
+    # Create log status dictionary
+    log_status = {
+        'api': 'Disabled',
+        'audit': 'Disabled',
+        'authenticator': 'Disabled',
+        'controllerManager': 'Disabled',
+        'scheduler': 'Disabled'
+    }
 
-        for log_setup in log_types:
-            if log_setup.get('enabled', False):
-                for log_type in log_setup.get('types', []):
-                    log_status[log_type] = 'Enabled'
+    for log_setup in log_types:
+        if log_setup.get('enabled', False):
+            for log_type in log_setup.get('types', []):
+                log_status[log_type] = 'Enabled'
 
-        # Extract encryption configuration
-        encryption_config = cluster.get('encryptionConfig', [])
-        kms_key_arn = 'Not Configured'
-        if encryption_config:
-            kms_key_arn = encryption_config[0].get('provider', {}).get('keyArn', 'Not Configured')
+    # Extract encryption configuration
+    encryption_config = cluster.get('encryptionConfig', [])
+    kms_key_arn = 'Not Configured'
+    if encryption_config:
+        kms_key_arn = encryption_config[0].get('provider', {}).get('keyArn', 'Not Configured')
 
-        # Extract OIDC issuer URL
-        identity = cluster.get('identity', {})
-        oidc_issuer = identity.get('oidc', {}).get('issuer', 'Not Available')
+    # Extract OIDC issuer URL
+    identity = cluster.get('identity', {})
+    oidc_issuer = identity.get('oidc', {}).get('issuer', 'Not Available')
 
-        # Format tags
-        tags = cluster.get('tags', {})
-        tag_string = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'No Tags'
+    # Format tags
+    tags = cluster.get('tags', {})
+    tag_string = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'No Tags'
 
-        cluster_info = {
-            'Region': region,
-            'Cluster Name': cluster.get('name', 'N/A'),
-            'Cluster ARN': cluster.get('arn', 'N/A'),
-            'Status': cluster.get('status', 'N/A'),
-            'Kubernetes Version': cluster.get('version', 'N/A'),
-            'Platform Version': cluster.get('platformVersion', 'N/A'),
-            'Created At': format_timestamp(cluster.get('createdAt')),
-            'Endpoint URL': cluster.get('endpoint', 'N/A'),
-            'Certificate Authority': 'Available' if cluster.get('certificateAuthority', {}).get('data') else 'Not Available',
-            'Cluster Role ARN': cluster.get('roleArn', 'N/A'),
-            'VPC ID': vpc_config.get('vpcId', 'N/A'),
-            'Subnet IDs': ', '.join(vpc_config.get('subnetIds', [])) or 'None',
-            'Security Group IDs': ', '.join(vpc_config.get('securityGroupIds', [])) or 'None',
-            'Cluster Security Group': vpc_config.get('clusterSecurityGroupId', 'N/A'),
-            'Public Access': 'Yes' if vpc_config.get('endpointConfigPublicAccess', False) else 'No',
-            'Private Access': 'Yes' if vpc_config.get('endpointConfigPrivateAccess', False) else 'No',
-            'Public Access CIDRs': ', '.join(vpc_config.get('publicAccessCidrs', [])) or 'None',
-            'Service IPv4 CIDR': cluster.get('kubernetesNetworkConfig', {}).get('serviceIpv4Cidr', 'N/A'),
-            'Service IPv6 CIDR': cluster.get('kubernetesNetworkConfig', {}).get('serviceIpv6Cidr', 'N/A'),
-            'API Server Logging': log_status.get('api', 'N/A'),
-            'Audit Logging': log_status.get('audit', 'N/A'),
-            'Authenticator Logging': log_status.get('authenticator', 'N/A'),
-            'Controller Manager Logging': log_status.get('controllerManager', 'N/A'),
-            'Scheduler Logging': log_status.get('scheduler', 'N/A'),
-            'Encryption KMS Key ARN': kms_key_arn,
-            'OIDC Issuer URL': oidc_issuer,
-            'Tags': tag_string[:500]  # Limit tag length for Excel
-        }
+    cluster_info = {
+        'Region': region,
+        'Cluster Name': cluster.get('name', 'N/A'),
+        'Cluster ARN': cluster.get('arn', 'N/A'),
+        'Status': cluster.get('status', 'N/A'),
+        'Kubernetes Version': cluster.get('version', 'N/A'),
+        'Platform Version': cluster.get('platformVersion', 'N/A'),
+        'Created At': format_timestamp(cluster.get('createdAt')),
+        'Endpoint URL': cluster.get('endpoint', 'N/A'),
+        'Certificate Authority': 'Available' if cluster.get('certificateAuthority', {}).get('data') else 'Not Available',
+        'Cluster Role ARN': cluster.get('roleArn', 'N/A'),
+        'VPC ID': vpc_config.get('vpcId', 'N/A'),
+        'Subnet IDs': ', '.join(vpc_config.get('subnetIds', [])) or 'None',
+        'Security Group IDs': ', '.join(vpc_config.get('securityGroupIds', [])) or 'None',
+        'Cluster Security Group': vpc_config.get('clusterSecurityGroupId', 'N/A'),
+        'Public Access': 'Yes' if vpc_config.get('endpointConfigPublicAccess', False) else 'No',
+        'Private Access': 'Yes' if vpc_config.get('endpointConfigPrivateAccess', False) else 'No',
+        'Public Access CIDRs': ', '.join(vpc_config.get('publicAccessCidrs', [])) or 'None',
+        'Service IPv4 CIDR': cluster.get('kubernetesNetworkConfig', {}).get('serviceIpv4Cidr', 'N/A'),
+        'Service IPv6 CIDR': cluster.get('kubernetesNetworkConfig', {}).get('serviceIpv6Cidr', 'N/A'),
+        'API Server Logging': log_status.get('api', 'N/A'),
+        'Audit Logging': log_status.get('audit', 'N/A'),
+        'Authenticator Logging': log_status.get('authenticator', 'N/A'),
+        'Controller Manager Logging': log_status.get('controllerManager', 'N/A'),
+        'Scheduler Logging': log_status.get('scheduler', 'N/A'),
+        'Encryption KMS Key ARN': kms_key_arn,
+        'OIDC Issuer URL': oidc_issuer,
+        'Tags': tag_string[:500]  # Limit tag length for Excel
+    }
 
-        return cluster_info
+    return cluster_info
 
-    except Exception as e:
-        utils.log_error(f"Error collecting details for cluster {cluster_name}", e)
-        return None
-
+@utils.aws_error_handler("Collecting node groups", default_return=[])
 def collect_node_groups(client, cluster_name, region):
     """
     Collect information about all node groups for a cluster.
@@ -269,98 +263,95 @@ def collect_node_groups(client, cluster_name, region):
     """
     node_groups_data = []
 
-    try:
-        # List all node groups for the cluster
-        response = client.list_nodegroups(clusterName=cluster_name)
-        nodegroup_names = response.get('nodegroups', [])
+    # List all node groups for the cluster
+    response = client.list_nodegroups(clusterName=cluster_name)
+    nodegroup_names = response.get('nodegroups', [])
 
-        if not nodegroup_names:
-            utils.log_info(f"No node groups found for cluster {cluster_name}")
-            return []
+    if not nodegroup_names:
+        utils.log_info(f"No node groups found for cluster {cluster_name}")
+        return []
 
-        utils.log_info(f"Found {len(nodegroup_names)} node groups for cluster {cluster_name}")
+    utils.log_info(f"Found {len(nodegroup_names)} node groups for cluster {cluster_name}")
 
-        for nodegroup_name in nodegroup_names:
-            try:
-                # Get detailed information for each node group
-                ng_response = client.describe_nodegroup(
-                    clusterName=cluster_name,
-                    nodegroupName=nodegroup_name
-                )
-                nodegroup = ng_response['nodegroup']
+    for nodegroup_name in nodegroup_names:
+        try:
+            # Get detailed information for each node group
+            ng_response = client.describe_nodegroup(
+                clusterName=cluster_name,
+                nodegroupName=nodegroup_name
+            )
+            nodegroup = ng_response['nodegroup']
 
-                # Extract scaling configuration
-                scaling_config = nodegroup.get('scalingConfig', {})
+            # Extract scaling configuration
+            scaling_config = nodegroup.get('scalingConfig', {})
 
-                # Extract instance types
-                instance_types = nodegroup.get('instanceTypes', [])
-                instance_types_str = ', '.join(instance_types) if instance_types else 'N/A'
+            # Extract instance types
+            instance_types = nodegroup.get('instanceTypes', [])
+            instance_types_str = ', '.join(instance_types) if instance_types else 'N/A'
 
-                # Extract launch template details
-                launch_template = nodegroup.get('launchTemplate', {})
-                lt_info = 'Not Used'
-                if launch_template:
-                    lt_name = launch_template.get('name', 'N/A')
-                    lt_version = launch_template.get('version', 'N/A')
-                    lt_id = launch_template.get('id', 'N/A')
-                    lt_info = f"Name: {lt_name}, Version: {lt_version}, ID: {lt_id}"
+            # Extract launch template details
+            launch_template = nodegroup.get('launchTemplate', {})
+            lt_info = 'Not Used'
+            if launch_template:
+                lt_name = launch_template.get('name', 'N/A')
+                lt_version = launch_template.get('version', 'N/A')
+                lt_id = launch_template.get('id', 'N/A')
+                lt_info = f"Name: {lt_name}, Version: {lt_version}, ID: {lt_id}"
 
-                # Extract remote access configuration
-                remote_access = nodegroup.get('remoteAccess', {})
-                remote_access_info = 'Not Configured'
-                if remote_access:
-                    ec2_key = remote_access.get('ec2SshKey', 'N/A')
-                    source_sgs = remote_access.get('sourceSecurityGroups', [])
-                    remote_access_info = f"Key: {ec2_key}, Security Groups: {', '.join(source_sgs) if source_sgs else 'None'}"
+            # Extract remote access configuration
+            remote_access = nodegroup.get('remoteAccess', {})
+            remote_access_info = 'Not Configured'
+            if remote_access:
+                ec2_key = remote_access.get('ec2SshKey', 'N/A')
+                source_sgs = remote_access.get('sourceSecurityGroups', [])
+                remote_access_info = f"Key: {ec2_key}, Security Groups: {', '.join(source_sgs) if source_sgs else 'None'}"
 
-                # Extract update configuration
-                update_config = nodegroup.get('updateConfig', {})
-                update_strategy = 'N/A'
-                if update_config:
-                    max_unavailable = update_config.get('maxUnavailable', 'N/A')
-                    max_unavailable_percentage = update_config.get('maxUnavailablePercentage', 'N/A')
-                    update_strategy = f"Max Unavailable: {max_unavailable}, Max Unavailable %: {max_unavailable_percentage}"
+            # Extract update configuration
+            update_config = nodegroup.get('updateConfig', {})
+            update_strategy = 'N/A'
+            if update_config:
+                max_unavailable = update_config.get('maxUnavailable', 'N/A')
+                max_unavailable_percentage = update_config.get('maxUnavailablePercentage', 'N/A')
+                update_strategy = f"Max Unavailable: {max_unavailable}, Max Unavailable %: {max_unavailable_percentage}"
 
-                # Format tags
-                tags = nodegroup.get('tags', {})
-                tag_string = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'No Tags'
+            # Format tags
+            tags = nodegroup.get('tags', {})
+            tag_string = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'No Tags'
 
-                nodegroup_info = {
-                    'Region': region,
-                    'Cluster Name': cluster_name,
-                    'Node Group Name': nodegroup.get('nodegroupName', 'N/A'),
-                    'Node Group ARN': nodegroup.get('nodegroupArn', 'N/A'),
-                    'Status': nodegroup.get('status', 'N/A'),
-                    'Capacity Type': nodegroup.get('capacityType', 'N/A'),
-                    'AMI Type': nodegroup.get('amiType', 'N/A'),
-                    'Release Version': nodegroup.get('releaseVersion', 'N/A'),
-                    'Kubernetes Version': nodegroup.get('version', 'N/A'),
-                    'Instance Types': instance_types_str,
-                    'Desired Size': scaling_config.get('desiredSize', 'N/A'),
-                    'Min Size': scaling_config.get('minSize', 'N/A'),
-                    'Max Size': scaling_config.get('maxSize', 'N/A'),
-                    'Disk Size (GB)': nodegroup.get('diskSize', 'N/A'),
-                    'Node Role ARN': nodegroup.get('nodeRole', 'N/A'),
-                    'Subnets': ', '.join(nodegroup.get('subnets', [])) or 'None',
-                    'Launch Template': lt_info[:300],  # Limit length
-                    'Remote Access': remote_access_info[:300],  # Limit length
-                    'Update Strategy': update_strategy[:200],  # Limit length
-                    'Created At': format_timestamp(nodegroup.get('createdAt')),
-                    'Modified At': format_timestamp(nodegroup.get('modifiedAt')),
-                    'Tags': tag_string[:500]  # Limit tag length
-                }
+            nodegroup_info = {
+                'Region': region,
+                'Cluster Name': cluster_name,
+                'Node Group Name': nodegroup.get('nodegroupName', 'N/A'),
+                'Node Group ARN': nodegroup.get('nodegroupArn', 'N/A'),
+                'Status': nodegroup.get('status', 'N/A'),
+                'Capacity Type': nodegroup.get('capacityType', 'N/A'),
+                'AMI Type': nodegroup.get('amiType', 'N/A'),
+                'Release Version': nodegroup.get('releaseVersion', 'N/A'),
+                'Kubernetes Version': nodegroup.get('version', 'N/A'),
+                'Instance Types': instance_types_str,
+                'Desired Size': scaling_config.get('desiredSize', 'N/A'),
+                'Min Size': scaling_config.get('minSize', 'N/A'),
+                'Max Size': scaling_config.get('maxSize', 'N/A'),
+                'Disk Size (GB)': nodegroup.get('diskSize', 'N/A'),
+                'Node Role ARN': nodegroup.get('nodeRole', 'N/A'),
+                'Subnets': ', '.join(nodegroup.get('subnets', [])) or 'None',
+                'Launch Template': lt_info[:300],  # Limit length
+                'Remote Access': remote_access_info[:300],  # Limit length
+                'Update Strategy': update_strategy[:200],  # Limit length
+                'Created At': format_timestamp(nodegroup.get('createdAt')),
+                'Modified At': format_timestamp(nodegroup.get('modifiedAt')),
+                'Tags': tag_string[:500]  # Limit tag length
+            }
 
-                node_groups_data.append(nodegroup_info)
+            node_groups_data.append(nodegroup_info)
 
-            except Exception as e:
-                utils.log_warning(f"Error collecting details for node group {nodegroup_name}: {e}")
-                continue
-
-    except Exception as e:
-        utils.log_error(f"Error collecting node groups for cluster {cluster_name}", e)
+        except Exception as e:
+            utils.log_warning(f"Error collecting details for node group {nodegroup_name}: {e}")
+            continue
 
     return node_groups_data
 
+@utils.aws_error_handler("Collecting cluster add-ons", default_return=[])
 def collect_cluster_addons(client, cluster_name, region):
     """
     Collect information about EKS add-ons for a cluster.
@@ -375,57 +366,53 @@ def collect_cluster_addons(client, cluster_name, region):
     """
     addons_data = []
 
-    try:
-        # List all add-ons for the cluster
-        response = client.list_addons(clusterName=cluster_name)
-        addon_names = response.get('addons', [])
+    # List all add-ons for the cluster
+    response = client.list_addons(clusterName=cluster_name)
+    addon_names = response.get('addons', [])
 
-        if not addon_names:
-            utils.log_info(f"No add-ons found for cluster {cluster_name}")
-            return []
+    if not addon_names:
+        utils.log_info(f"No add-ons found for cluster {cluster_name}")
+        return []
 
-        utils.log_info(f"Found {len(addon_names)} add-ons for cluster {cluster_name}")
+    utils.log_info(f"Found {len(addon_names)} add-ons for cluster {cluster_name}")
 
-        for addon_name in addon_names:
-            try:
-                # Get detailed information for each add-on
-                addon_response = client.describe_addon(
-                    clusterName=cluster_name,
-                    addonName=addon_name
-                )
-                addon = addon_response['addon']
+    for addon_name in addon_names:
+        try:
+            # Get detailed information for each add-on
+            addon_response = client.describe_addon(
+                clusterName=cluster_name,
+                addonName=addon_name
+            )
+            addon = addon_response['addon']
 
-                # Extract configuration values (if any)
-                config_values = addon.get('configurationValues', 'Default Configuration')
+            # Extract configuration values (if any)
+            config_values = addon.get('configurationValues', 'Default Configuration')
 
-                # Format tags
-                tags = addon.get('tags', {})
-                tag_string = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'No Tags'
+            # Format tags
+            tags = addon.get('tags', {})
+            tag_string = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'No Tags'
 
-                addon_info = {
-                    'Region': region,
-                    'Cluster Name': cluster_name,
-                    'Add-on Name': addon.get('addonName', 'N/A'),
-                    'Add-on ARN': addon.get('addonArn', 'N/A'),
-                    'Status': addon.get('status', 'N/A'),
-                    'Version': addon.get('addonVersion', 'N/A'),
-                    'Service Account Role ARN': addon.get('serviceAccountRoleArn', 'Not Configured'),
-                    'Configuration Values': str(config_values)[:300] if config_values != 'Default Configuration' else config_values,
-                    'Resolve Conflicts': addon.get('resolveConflicts', 'N/A'),
-                    'Health Issues': len(addon.get('health', {}).get('issues', [])),
-                    'Created At': format_timestamp(addon.get('createdAt')),
-                    'Modified At': format_timestamp(addon.get('modifiedAt')),
-                    'Tags': tag_string[:300]
-                }
+            addon_info = {
+                'Region': region,
+                'Cluster Name': cluster_name,
+                'Add-on Name': addon.get('addonName', 'N/A'),
+                'Add-on ARN': addon.get('addonArn', 'N/A'),
+                'Status': addon.get('status', 'N/A'),
+                'Version': addon.get('addonVersion', 'N/A'),
+                'Service Account Role ARN': addon.get('serviceAccountRoleArn', 'Not Configured'),
+                'Configuration Values': str(config_values)[:300] if config_values != 'Default Configuration' else config_values,
+                'Resolve Conflicts': addon.get('resolveConflicts', 'N/A'),
+                'Health Issues': len(addon.get('health', {}).get('issues', [])),
+                'Created At': format_timestamp(addon.get('createdAt')),
+                'Modified At': format_timestamp(addon.get('modifiedAt')),
+                'Tags': tag_string[:300]
+            }
 
-                addons_data.append(addon_info)
+            addons_data.append(addon_info)
 
-            except Exception as e:
-                utils.log_warning(f"Error collecting details for add-on {addon_name}: {e}")
-                continue
-
-    except Exception as e:
-        utils.log_error(f"Error collecting add-ons for cluster {cluster_name}", e)
+        except Exception as e:
+            utils.log_warning(f"Error collecting details for add-on {addon_name}: {e}")
+            continue
 
     return addons_data
 
@@ -444,7 +431,7 @@ def collect_eks_clusters(region):
     addons_data = []
 
     try:
-        client = boto3.client('eks', region_name=region)
+        client = utils.get_boto3_client('eks', region_name=region)
 
         # List all EKS clusters in the region
         response = client.list_clusters()
@@ -472,9 +459,6 @@ def collect_eks_clusters(region):
             # Collect add-ons for this cluster
             cluster_addons = collect_cluster_addons(client, cluster_name, region)
             addons_data.extend(cluster_addons)
-
-            # Small delay to avoid API throttling
-            time.sleep(0.1)
 
     except ClientError as e:
         error_code = e.response['Error']['Code']
@@ -669,7 +653,7 @@ def main():
 
         try:
             # Test AWS credentials
-            sts = boto3.client('sts')
+            sts = utils.get_boto3_client('sts')
             sts.get_caller_identity()
             utils.log_success("AWS credentials validated")
 

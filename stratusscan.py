@@ -373,12 +373,12 @@ def get_menu_structure():
             "submenu": {
                 "1": {
                     "name": "EBS Volumes",
-                    "file": scripts_dir / "ebs-volumes.py",
+                    "file": scripts_dir / "ebs-volumes-export.py",
                     "description": "Export EBS volume information"
                 },
                 "2": {
                     "name": "EBS Snapshots",
-                    "file": scripts_dir / "ebs-snapshots.py",
+                    "file": scripts_dir / "ebs-snapshots-export.py",
                     "description": "Export EBS snapshot information"
                 },
                 "3": {

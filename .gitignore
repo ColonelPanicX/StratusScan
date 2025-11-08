@@ -53,8 +53,13 @@ venv.bak/
 # Testing
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .tox/
+*.cover
+.hypothesis/
+test-results/
+bandit-report.json
 
 # OS files
 .DS_Store
@@ -74,3 +79,29 @@ logs/
 # Config files with sensitive data (if any)
 # config_local.json
 # secrets.json
+
+# Symlinks
+ref-docs
+
+# Checkpoints
+.checkpoints/
+*.checkpoint
+
+# Temporary documentation and status files
+*_MIGRATION_*.md
+*_SUMMARY.txt
+*_STATUS.md
+*_REPORT.md
+*_COMPLETION_*.md
+*_MIGRATION_*.md
+*_IMPLEMENTATION_*.md
+OPTION_*.md
+BATCH_*.md
+BATCH_*.txt
+ERROR_HANDLING_PATTERNS.md
+IMPLEMENTATION_SUMMARY.md
+VALIDATION_SUMMARY.md
+QUICK_REFERENCE.md
+
+# Audit directory
+.AUDIT/

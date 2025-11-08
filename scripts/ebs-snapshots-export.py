@@ -6,21 +6,17 @@
 ===========================
 
 Title: AWS EBS Snapshots Export Tool
-Version: v1.0.0
-Date: MAR-04-2025
+Version: v2.0.0
+Date: AUG-19-2025
 
 Description:
-This script exports Amazon EBS snapshot information across all AWS regions or a specific
-region into an Excel spreadsheet. The export includes snapshot name, ID, description,
-size information, encryption status, storage tier, and creation date.
+This script exports Amazon EBS snapshot information across AWS regions or a specific
+AWS region into an Excel spreadsheet. The export includes snapshot name, ID,
+description, size information, encryption status, storage tier, and creation date.
 """
 
 import sys
-import os
-import boto3
 import datetime
-import time
-from botocore.exceptions import ClientError
 from pathlib import Path
 
 # Add path to import utils module
@@ -49,110 +45,57 @@ except ImportError:
 def print_title():
     """
     Print the title banner and get account information.
-    
+
     Returns:
         tuple: (account_id, account_name)
     """
     print("====================================================================")
-    print("                  AWS RESOURCE SCANNER                              ")
+    print("                   AWS RESOURCE SCANNER                             ")
     print("====================================================================")
     print("AWS EBS SNAPSHOTS EXPORT TOOL")
     print("====================================================================")
-    print("Version: v1.0.0                                 Date: MAR-04-2025")
+    print("Version: v2.0.0                                Date: AUG-19-2025")
+    print("Environment: AWS Commercial")
     print("====================================================================")
-    
-    # Get the current AWS account ID
-    try:
-        # Create a new STS client to get the current account ID
-        sts_client = boto3.client('sts')
-        # Get account ID from caller identity
-        account_id = sts_client.get_caller_identity()['Account']
-        # Map the account ID to an account name using utils module
-        account_name = utils.get_account_name(account_id, default=account_id)
-        
-        print(f"Account ID: {account_id}")
-        print(f"Account Name: {account_name}")
-    except Exception as e:
-        print(f"Could not determine account information: {e}")
-        account_id = "UNKNOWN"
-        account_name = "UNKNOWN-ACCOUNT"
-    
+
+    # Get account information using utils
+    account_id, account_name = utils.get_account_info()
+
+    print(f"Account ID: {account_id}")
+    print(f"Account Name: {account_name}")
     print("====================================================================")
     return account_id, account_name
 
-def check_dependencies():
+def get_aws_regions():
     """
-    Check if required dependencies are installed and offer to install them if missing.
-    
-    Returns:
-        bool: True if all dependencies are satisfied, False otherwise
-    """
-    required_packages = ['pandas', 'openpyxl']
-    missing_packages = []
-    
-    for package in required_packages:
-        try:
-            __import__(package)
-            print(f"✓ {package} is already installed")
-        except ImportError:
-            missing_packages.append(package)
-    
-    if missing_packages:
-        print(f"\nPackages required but not installed: {', '.join(missing_packages)}")
-        response = input("Would you like to install these packages now? (y/n): ").lower()
-        
-        if response == 'y':
-            import subprocess
-            for package in missing_packages:
-                print(f"Installing {package}...")
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                    print(f"✓ Successfully installed {package}")
-                except Exception as e:
-                    print(f"Error installing {package}: {e}")
-                    print("Please install it manually with: pip install " + package)
-                    return False
-            return True
-        else:
-            print("Cannot proceed without required dependencies.")
-            return False
-    
-    return True
+    Get a list of available AWS regions.
 
-def get_all_regions():
-    """
-    Get a list of all available AWS regions.
-    
     Returns:
-        list: List of region names
+        list: List of AWS region names
     """
     try:
-        # Create an EC2 client to get all available regions
-        ec2_client = boto3.client('ec2')
-        # Get all regions using the EC2 DescribeRegions API call
-        regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
+        # Use utils function to get accessible AWS regions
+        regions = utils.get_available_aws_regions()
+        if not regions:
+            utils.log_warning("No accessible AWS regions found. Using default list.")
+            regions = utils.get_aws_regions()
         return regions
     except Exception as e:
-        print(f"Error getting regions: {e}")
-        # Return a default list of common regions if API call fails
-        return [
-            'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
-            'ca-central-1', 'eu-west-1', 'eu-west-2', 'eu-central-1',
-            'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1', 'ap-south-1'
-        ]
+        utils.log_error("Error getting AWS regions", e)
+        # Return default AWS regions if API call fails
+        return utils.get_aws_regions()
 
-def is_valid_region(region_name):
+def is_valid_aws_region(region_name):
     """
-    Check if a region name is valid.
-    
+    Check if a region name is a valid AWS region.
+
     Args:
         region_name (str): The region name to validate
-        
+
     Returns:
         bool: True if valid, False otherwise
     """
-    all_regions = get_all_regions()
-    return region_name in all_regions
+    return utils.validate_aws_region(region_name)
 
 def get_snapshot_name(snapshot):
     """
@@ -170,69 +113,112 @@ def get_snapshot_name(snapshot):
                 return tag['Value']
     return 'N/A'
 
-def get_snapshots(region):
+def format_tags(tags):
     """
-    Get all EBS snapshots owned by the account in a specific region.
+    Format snapshot tags in the format "Key1:Value1, Key2:Value2, etc..."
     
     Args:
-        region (str): AWS region name
+        tags (list): List of tag dictionaries with Key and Value
         
+    Returns:
+        str: Formatted tags string or 'N/A' if no tags
+    """
+    if not tags:
+        return 'N/A'
+    
+    formatted_tags = []
+    for tag in tags:
+        if 'Key' in tag and 'Value' in tag:
+            formatted_tags.append(f"{tag['Key']}:{tag['Value']}")
+    
+    if formatted_tags:
+        return ', '.join(formatted_tags)
+    else:
+        return 'N/A'
+
+@utils.aws_error_handler("Collecting EBS snapshots", default_return=[])
+def get_snapshots(region):
+    """
+    Get all EBS snapshots owned by the account in a specific AWS region.
+
+    Args:
+        region (str): AWS region name
+
     Returns:
         list: List of dictionaries with snapshot information
     """
+    # Validate region is AWS
+    if not utils.validate_aws_region(region):
+        utils.log_error(f"Invalid AWS region: {region}")
+        return []
+
     snapshots_data = []
-    
-    try:
-        # Create an EC2 client for the specified region
-        ec2_client = boto3.client('ec2', region_name=region)
-        
-        # Use pagination to handle large number of snapshots
-        paginator = ec2_client.get_paginator('describe_snapshots')
-        page_iterator = paginator.paginate(OwnerIds=['self'])
-        
-        for page in page_iterator:
-            for snapshot in page['Snapshots']:
-                # Get snapshot name from tags
-                snapshot_name = get_snapshot_name(snapshot)
-                
-                # Extract standard snapshot attributes
-                snapshot_id = snapshot['SnapshotId']
-                volume_id = snapshot.get('VolumeId', 'N/A')
-                description = snapshot.get('Description', 'N/A')
-                volume_size = snapshot.get('VolumeSize', 0)  # Size in GB
-                
-                # Handle start time (convert to string without timezone)
-                start_time = snapshot.get('StartTime', '')
-                start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S') if start_time else 'N/A'
-                
-                # Get encryption status
-                encryption = 'Yes' if snapshot.get('Encrypted', False) else 'No'
-                
-                # Get storage tier (Standard or Archive)
-                storage_tier = snapshot.get('StorageTier', 'Standard')
-                
-                # Additional data processing for specific attributes
-                # Full snapshot size is reported in bytes if available, convert to GB
-                full_snapshot_size_bytes = snapshot.get('DataEncryptionKeyId', 0)  # This field doesn't exist, but keeping the structure
-                full_snapshot_size_gb = 'N/A'  # Usually not available via standard API
-                
-                # Add to results
-                snapshots_data.append({
-                    'Name': snapshot_name,
-                    'Snapshot ID': snapshot_id,
-                    'Volume ID': volume_id,
-                    'Description': description,
-                    'Volume Size (GB)': volume_size,
-                    'Full Snapshot Size': full_snapshot_size_gb,
-                    'Storage Tier': storage_tier,
-                    'Started': start_time_str,
-                    'Encryption': encryption,
-                    'Region': region
-                })
-                
-    except Exception as e:
-        print(f"Error getting snapshots in region {region}: {e}")
-    
+
+    # Create EC2 client using utils for proper retry logic
+    ec2_client = utils.get_boto3_client('ec2', region_name=region)
+
+    # Use pagination to handle large number of snapshots
+    paginator = ec2_client.get_paginator('describe_snapshots')
+    page_iterator = paginator.paginate(OwnerIds=['self'])
+
+    for page in page_iterator:
+        for snapshot in page['Snapshots']:
+            # Get snapshot name from tags
+            snapshot_name = get_snapshot_name(snapshot)
+
+            # Extract standard snapshot attributes
+            snapshot_id = snapshot['SnapshotId']
+            volume_id = snapshot.get('VolumeId', 'N/A')
+            description = snapshot.get('Description', 'N/A')
+            volume_size = snapshot.get('VolumeSize', 0)  # Size in GB
+
+            # Handle start time (convert to string without timezone)
+            start_time = snapshot.get('StartTime', '')
+            start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S') if start_time else 'N/A'
+
+            # Get encryption status
+            encryption = 'Yes' if snapshot.get('Encrypted', False) else 'No'
+
+            # Get storage tier (Standard or Archive)
+            storage_tier = snapshot.get('StorageTier', 'Standard')
+
+            # Get state and progress
+            state = snapshot.get('State', 'N/A')
+            progress = snapshot.get('Progress', 'N/A')
+
+            # Get owner ID with account name mapping
+            owner_id = snapshot.get('OwnerId', 'N/A')
+            owner_formatted = utils.get_account_name_formatted(owner_id)
+
+            # Get KMS key ID if encrypted
+            kms_key_id = snapshot.get('KmsKeyId', 'N/A') if snapshot.get('Encrypted', False) else 'N/A'
+
+            # Format tags
+            snapshot_tags = format_tags(snapshot.get('Tags', []))
+
+            # Additional data processing for specific attributes
+            # Full snapshot size is not directly available via standard API
+            full_snapshot_size_gb = 'N/A'
+
+            # Add to results
+            snapshots_data.append({
+                'Name': snapshot_name,
+                'Snapshot ID': snapshot_id,
+                'Volume ID': volume_id,
+                'Description': description,
+                'Volume Size (GB)': volume_size,
+                'Full Snapshot Size': full_snapshot_size_gb,
+                'Storage Tier': storage_tier,
+                'State': state,
+                'Progress': progress,
+                'Started': start_time_str,
+                'Encryption': encryption,
+                'KMS Key ID': kms_key_id,
+                'Owner ID': owner_formatted,
+                'Region': region,
+                'Tags': snapshot_tags
+            })
+
     return snapshots_data
 
 def main():
@@ -242,88 +228,104 @@ def main():
     try:
         # Print title and get account information
         account_id, account_name = print_title()
-        
+
         # Check dependencies
-        if not check_dependencies():
+        if not utils.ensure_dependencies('pandas', 'openpyxl'):
             sys.exit(1)
         
         # Now import pandas (after dependency check)
         import pandas as pd
         
-        # Get region preference from user
-        print("\nWould you like the information for all regions or a specific region?")
-        region_choice = input("If all, write \"all\", and if a specific region, write the region's name (ex. us-east-1): ").strip().lower()
+        if account_name == "UNKNOWN-ACCOUNT":
+            proceed = input("Unable to determine account name. Proceed anyway? (y/n): ").lower()
+            if proceed != 'y':
+                print("Exiting script...")
+                sys.exit(0)
+        
+        # Get AWS region preference from user
+        print("\nAWS Region Selection:")
+        print("Would you like the information for all AWS regions or a specific region?")
+        print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1")
+        region_choice = input("If all, write \"all\", or specify an AWS region name: ").strip().lower()
         
         if region_choice != "all":
-            if not is_valid_region(region_choice):
-                print(f"Warning: '{region_choice}' is not a valid AWS region. Checking all regions instead.")
+            if not is_valid_aws_region(region_choice):
+                utils.log_warning(f"'{region_choice}' is not a valid AWS region.")
+                utils.log_info("Valid AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1")
+                utils.log_info("Checking all AWS regions instead.")
                 region_choice = "all"
         
-        # Determine regions to process
+        # Determine AWS regions to process
         if region_choice == "all":
-            print("\nRetrieving AWS regions...")
-            regions = get_all_regions()
+            utils.log_info("Retrieving available AWS regions...")
+            regions = get_aws_regions()
             if not regions:
-                print("Error: No AWS regions found. Please check your AWS credentials and permissions.")
+                utils.log_error("No AWS regions found. Please check your AWS credentials and permissions.")
                 sys.exit(1)
-            print(f"Found {len(regions)} regions to scan.")
+            utils.log_info(f"Found {len(regions)} AWS regions to scan: {', '.join(regions)}")
         else:
             regions = [region_choice]
-            print(f"\nScanning only the {region_choice} region.")
+            utils.log_info(f"Scanning only the {region_choice} AWS region.")
         
-        # Collect snapshot data from all specified regions
+        # Collect snapshot data from all specified AWS regions
         all_snapshots = []
         total_regions = len(regions)
-        
+
         for i, region in enumerate(regions, 1):
             progress = (i / total_regions) * 100
-            print(f"[{progress:.1f}%] Processing region: {region} ({i}/{total_regions})")
+            utils.log_info(f"[{progress:.1f}%] Processing AWS region: {region} ({i}/{total_regions})")
             
             region_snapshots = get_snapshots(region)
             all_snapshots.extend(region_snapshots)
-            
-            print(f"  Found {len(region_snapshots)} snapshots in {region}")
-            
-            # Add a small delay to avoid API throttling
-            time.sleep(0.5)
+
+            utils.log_info(f"Found {len(region_snapshots)} snapshots in {region}")
         
         # Print summary
         total_snapshots = len(all_snapshots)
-        print(f"\nTotal snapshots found across all regions: {total_snapshots}")
+        utils.log_success(f"Total EBS snapshots found across all AWS regions: {total_snapshots}")
         
         if total_snapshots == 0:
-            print("No snapshots found. Nothing to export.")
+            utils.log_warning("No snapshots found. Nothing to export.")
             sys.exit(0)
         
         # Create DataFrame from snapshot data
+        utils.log_info("Preparing data for export to Excel format...")
         df = pd.DataFrame(all_snapshots)
-        
+
+        # Prepare and sanitize DataFrame (tags may contain secrets)
+        df = utils.sanitize_for_export(
+            utils.prepare_dataframe_for_export(df)
+        )
+
         # Generate filename with region info
         region_suffix = "" if region_choice == "all" else f"-{region_choice}"
-        
+
         # Use utils module to generate filename
         filename = utils.create_export_filename(
-            account_name, 
-            "ebs-snapshots", 
-            region_suffix, 
+            account_name,
+            "ebs-snapshots",
+            region_suffix if region_suffix else None,
             datetime.datetime.now().strftime("%m.%d.%Y")
         )
-        
+
         # Save the data using the utility function
         output_path = utils.save_dataframe_to_excel(df, filename)
         
         if output_path:
-            print(f"\nData exported successfully to: {output_path}")
-            print("Script execution completed.")
+            utils.log_success("AWS EBS snapshots data exported successfully!")
+            utils.log_info(f"File location: {output_path}")
+            utils.log_info(f"Export contains data from {len(regions)} AWS region(s)")
+            utils.log_info(f"Total snapshots exported: {total_snapshots}")
+            print("\nScript execution completed.")
         else:
-            print("\nError exporting data. Please check the logs.")
+            utils.log_error("Error exporting data. Please check the logs.")
             sys.exit(1)
     
     except KeyboardInterrupt:
         print("\n\nScript interrupted by user. Exiting...")
         sys.exit(0)
     except Exception as e:
-        print(f"\nUnexpected error: {e}")
+        utils.log_error("Unexpected error occurred", e)
         sys.exit(1)
 
 if __name__ == "__main__":

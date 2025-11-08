@@ -52,7 +52,7 @@ def check_dependencies():
     """
     Check if required dependencies are installed and offer to install them if missing.
     """
-    required_packages = ['pandas', 'openpyxl', 'python-dateutil']
+    required_packages = ['boto3', 'pandas', 'openpyxl', 'python-dateutil']
     missing_packages = []
     
     for package in required_packages:

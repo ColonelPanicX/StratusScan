@@ -18,16 +18,14 @@ Collected information includes: IAM Users (with authentication details), IAM Rol
 relationships), IAM Policies (with risk assessment), and comprehensive summary analytics.
 """
 
-import os
 import sys
-import boto3
 import datetime
 import time
 import json
 import re
 import urllib.parse
 from pathlib import Path
-from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.exceptions import ClientError
 
 # Add path to import utils module
 try:
@@ -52,72 +50,9 @@ except ImportError:
         print("ERROR: Could not import the utils module. Make sure utils.py is in the StratusScan directory.")
         sys.exit(1)
 
-def check_dependencies():
-    """
-    Check if required dependencies are installed and offer to install them if missing.
+# Dependency checking handled by utils.ensure_dependencies()
 
-    Returns:
-        bool: True if all dependencies are satisfied, False otherwise
-    """
-    required_packages = ['pandas', 'openpyxl']
-    missing_packages = []
-
-    for package in required_packages:
-        try:
-            __import__(package)
-            utils.log_info(f"[OK] {package} is already installed")
-        except ImportError:
-            missing_packages.append(package)
-
-    if missing_packages:
-        utils.log_warning(f"Packages required but not installed: {', '.join(missing_packages)}")
-        response = input("Would you like to install these packages now? (y/n): ").lower().strip()
-
-        if response == 'y':
-            import subprocess
-            for package in missing_packages:
-                utils.log_info(f"Installing {package}...")
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                    utils.log_success(f"{package} installed successfully")
-                except subprocess.CalledProcessError as e:
-                    utils.log_error(f"Error installing {package}", e)
-                    return False
-        else:
-            print("Cannot continue without required packages. Exiting.")
-            return False
-
-    return True
-
-def get_account_info():
-    """
-    Get the current AWS account ID and name with AWS validation.
-
-    Returns:
-        tuple: (account_id, account_name)
-    """
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
-
-        # Validate AWS environment
-        caller_arn = sts.get_caller_identity()['Arn']
-        try:
-            iam_client = boto3.client('iam')
-            aliases = iam_client.list_account_aliases()['AccountAliases']
-            if aliases:
-                account_name = aliases[0]
-            else:
-                # Use utils module for account name mapping
-                account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
-        except Exception:
-            # Use utils module for account name mapping
-            account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
-
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
+# Account info retrieval handled by utils.get_account_info()
 
 def print_title():
     """
@@ -135,8 +70,8 @@ def print_title():
     print("Environment: AWS Commercial")
     print("====================================================================")
 
-    # Get account information
-    account_id, account_name = get_account_info()
+    # Get account information using utils
+    account_id, account_name = utils.get_account_info()
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")
@@ -268,83 +203,71 @@ def get_access_key_info(iam_client, username):
         utils.log_warning(f"Could not get access key info for user {username}: {e}")
         return "Unknown", "Unknown", "Unknown"
 
+@utils.aws_error_handler("Collecting IAM users", default_return=[])
 def collect_iam_users():
     """Collect IAM user information from AWS."""
     utils.log_info("Collecting IAM users from AWS environment...")
 
-    try:
-        iam_client = boto3.client('iam', region_name='us-west-2')
-    except Exception as e:
-        utils.log_error("Error creating IAM client", e)
-        return []
-
+    iam_client = utils.get_boto3_client('iam', region_name='us-west-2')
     user_data = []
 
-    try:
-        # Get all IAM users
-        paginator = iam_client.get_paginator('list_users')
+    # Get all IAM users
+    paginator = iam_client.get_paginator('list_users')
 
-        total_users = 0
-        for page in paginator.paginate():
-            users = page['Users']
-            total_users += len(users)
+    total_users = 0
+    for page in paginator.paginate():
+        users = page['Users']
+        total_users += len(users)
 
-        utils.log_info(f"Found {total_users} IAM users to process")
+    utils.log_info(f"Found {total_users} IAM users to process")
 
-        # Reset paginator and process users
-        paginator = iam_client.get_paginator('list_users')
-        processed = 0
+    # Reset paginator and process users
+    paginator = iam_client.get_paginator('list_users')
+    processed = 0
 
-        for page in paginator.paginate():
-            users = page['Users']
+    for page in paginator.paginate():
+        users = page['Users']
 
-            for user in users:
-                username = user['UserName']
-                processed += 1
-                progress = (processed / total_users) * 100
+        for user in users:
+            username = user['UserName']
+            processed += 1
+            progress = (processed / total_users) * 100
 
-                utils.log_info(f"[{progress:.1f}%] Processing user {processed}/{total_users}: {username}")
+            utils.log_info(f"[{progress:.1f}%] Processing user {processed}/{total_users}: {username}")
 
-                # Basic user information
-                creation_date = user['CreateDate'].strftime('%Y-%m-%d %H:%M:%S UTC') if user['CreateDate'] else "Unknown"
-                password_last_used = user.get('PasswordLastUsed')
+            # Basic user information
+            creation_date = user['CreateDate'].strftime('%Y-%m-%d %H:%M:%S UTC') if user['CreateDate'] else "Unknown"
+            password_last_used = user.get('PasswordLastUsed')
 
-                # Format console last sign-in
-                if password_last_used:
-                    console_last_signin = password_last_used.strftime('%Y-%m-%d %H:%M:%S UTC')
-                else:
-                    console_last_signin = "Never"
+            # Format console last sign-in
+            if password_last_used:
+                console_last_signin = password_last_used.strftime('%Y-%m-%d %H:%M:%S UTC')
+            else:
+                console_last_signin = "Never"
 
-                # Get additional user information
-                groups = get_user_groups(iam_client, username)
-                mfa_status = get_user_mfa_devices(iam_client, username)
-                password_age, console_access = get_password_info(iam_client, username)
-                access_key_id, active_key_age, access_key_last_used = get_access_key_info(iam_client, username)
-                permission_policies = get_user_policies(iam_client, username)
+            # Get additional user information
+            groups = get_user_groups(iam_client, username)
+            mfa_status = get_user_mfa_devices(iam_client, username)
+            password_age, console_access = get_password_info(iam_client, username)
+            access_key_id, active_key_age, access_key_last_used = get_access_key_info(iam_client, username)
+            permission_policies = get_user_policies(iam_client, username)
 
-                # Compile user data
-                user_info = {
-                    'User Name': username,
-                    'Groups': groups,
-                    'MFA': mfa_status,
-                    'Password Age': f"{password_age} days" if isinstance(password_age, int) else password_age,
-                    'Console Last Sign-in': console_last_signin,
-                    'Access Key ID': access_key_id,
-                    'Active Key Age': f"{active_key_age} days" if isinstance(active_key_age, int) else active_key_age,
-                    'Access Key Last Used': access_key_last_used,
-                    'Creation Date': creation_date,
-                    'Console Access': console_access,
-                    'Permission Policies': permission_policies
-                }
+            # Compile user data
+            user_info = {
+                'User Name': username,
+                'Groups': groups,
+                'MFA': mfa_status,
+                'Password Age': f"{password_age} days" if isinstance(password_age, int) else password_age,
+                'Console Last Sign-in': console_last_signin,
+                'Access Key ID': access_key_id,
+                'Active Key Age': f"{active_key_age} days" if isinstance(active_key_age, int) else active_key_age,
+                'Access Key Last Used': access_key_last_used,
+                'Creation Date': creation_date,
+                'Console Access': console_access,
+                'Permission Policies': permission_policies
+            }
 
-                user_data.append(user_info)
-
-                # Small delay to avoid API throttling
-                time.sleep(0.1)
-
-    except Exception as e:
-        utils.log_error("Error collecting IAM user information", e)
-        return []
+            user_data.append(user_info)
 
     utils.log_success(f"Successfully collected information for {len(user_data)} users")
     return user_data
@@ -514,105 +437,93 @@ def get_role_tags(iam_client, role_name):
         utils.log_warning(f"Could not get tags for role {role_name}: {e}")
         return "Unknown"
 
+@utils.aws_error_handler("Collecting IAM roles", default_return=[])
 def collect_iam_roles():
     """Collect IAM role information from AWS."""
     utils.log_info("Collecting IAM roles from AWS environment...")
 
-    try:
-        iam_client = boto3.client('iam', region_name='us-west-2')
-    except Exception as e:
-        utils.log_error("Error creating IAM client", e)
-        return []
-
+    iam_client = utils.get_boto3_client('iam', region_name='us-west-2')
     role_data = []
 
-    try:
-        # Get all IAM roles
-        paginator = iam_client.get_paginator('list_roles')
+    # Get all IAM roles
+    paginator = iam_client.get_paginator('list_roles')
 
-        total_roles = 0
-        for page in paginator.paginate():
-            roles = page['Roles']
-            total_roles += len(roles)
+    total_roles = 0
+    for page in paginator.paginate():
+        roles = page['Roles']
+        total_roles += len(roles)
 
-        utils.log_info(f"Found {total_roles} IAM roles to process")
+    utils.log_info(f"Found {total_roles} IAM roles to process")
 
-        # Reset paginator and process roles
-        paginator = iam_client.get_paginator('list_roles')
-        processed = 0
+    # Reset paginator and process roles
+    paginator = iam_client.get_paginator('list_roles')
+    processed = 0
 
-        for page in paginator.paginate():
-            roles = page['Roles']
+    for page in paginator.paginate():
+        roles = page['Roles']
 
-            for role in roles:
-                role_name = role['RoleName']
-                processed += 1
-                progress = (processed / total_roles) * 100
+        for role in roles:
+            role_name = role['RoleName']
+            processed += 1
+            progress = (processed / total_roles) * 100
 
-                utils.log_info(f"[{progress:.1f}%] Processing role {processed}/{total_roles}: {role_name}")
+            utils.log_info(f"[{progress:.1f}%] Processing role {processed}/{total_roles}: {role_name}")
 
-                # Basic role information
-                creation_date = role['CreateDate'].strftime('%Y-%m-%d %H:%M:%S UTC') if role['CreateDate'] else "Unknown"
-                role_path = role.get('Path', '/')
-                description = role.get('Description', 'None')
-                max_session_duration = role.get('MaxSessionDuration', 3600) // 3600  # Convert to hours
+            # Basic role information
+            creation_date = role['CreateDate'].strftime('%Y-%m-%d %H:%M:%S UTC') if role['CreateDate'] else "Unknown"
+            role_path = role.get('Path', '/')
+            description = role.get('Description', 'None')
+            max_session_duration = role.get('MaxSessionDuration', 3600) // 3600  # Convert to hours
 
-                # Parse trust policy
-                trust_policy_doc = role.get('AssumeRolePolicyDocument', {})
-                trusted_entities, trust_summary, cross_account_info, service_usage = analyze_trust_policy(trust_policy_doc)
+            # Parse trust policy
+            trust_policy_doc = role.get('AssumeRolePolicyDocument', {})
+            trusted_entities, trust_summary, cross_account_info, service_usage = analyze_trust_policy(trust_policy_doc)
 
-                # Determine role type
-                role_type = determine_role_type(role_name, role_path, trust_policy_doc)
+            # Determine role type
+            role_type = determine_role_type(role_name, role_path, trust_policy_doc)
 
-                # Get role usage information
-                try:
-                    role_usage = iam_client.get_role(RoleName=role_name)
-                    role_last_used = role_usage['Role'].get('RoleLastUsed', {})
-                    last_used_date = role_last_used.get('LastUsedDate')
-                    last_used_region = role_last_used.get('Region', 'Unknown')
+            # Get role usage information
+            try:
+                role_usage = iam_client.get_role(RoleName=role_name)
+                role_last_used = role_usage['Role'].get('RoleLastUsed', {})
+                last_used_date = role_last_used.get('LastUsedDate')
+                last_used_region = role_last_used.get('Region', 'Unknown')
 
-                    if last_used_date:
-                        last_used_str = last_used_date.strftime('%Y-%m-%d %H:%M:%S UTC')
-                        days_since_used = calculate_days_since_last_used(last_used_date)
-                    else:
-                        last_used_str = "Never"
-                        days_since_used = "Never"
+                if last_used_date:
+                    last_used_str = last_used_date.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    days_since_used = calculate_days_since_last_used(last_used_date)
+                else:
+                    last_used_str = "Never"
+                    days_since_used = "Never"
 
-                except Exception as e:
-                    utils.log_warning(f"Could not get usage info for role {role_name}: {e}")
-                    last_used_str = "Unknown"
-                    days_since_used = "Unknown"
+            except Exception as e:
+                utils.log_warning(f"Could not get usage info for role {role_name}: {e}")
+                last_used_str = "Unknown"
+                days_since_used = "Unknown"
 
-                # Get additional role information
-                permission_policies = get_role_policies(iam_client, role_name)
-                tags = get_role_tags(iam_client, role_name)
+            # Get additional role information
+            permission_policies = get_role_policies(iam_client, role_name)
+            tags = get_role_tags(iam_client, role_name)
 
-                # Compile role data
-                role_info = {
-                    'Role Name': role_name,
-                    'Role Type': role_type,
-                    'Trusted Entities': trusted_entities,
-                    'Trust Policy Summary': trust_summary,
-                    'Permission Policies': permission_policies,
-                    'Last Used': last_used_str,
-                    'Days Since Last Used': days_since_used,
-                    'Max Session Duration (Hours)': max_session_duration,
-                    'Cross-Account Access': cross_account_info,
-                    'Service Usage': service_usage,
-                    'Creation Date': creation_date,
-                    'Path': role_path,
-                    'Description': description,
-                    'Tags': tags
-                }
+            # Compile role data
+            role_info = {
+                'Role Name': role_name,
+                'Role Type': role_type,
+                'Trusted Entities': trusted_entities,
+                'Trust Policy Summary': trust_summary,
+                'Permission Policies': permission_policies,
+                'Last Used': last_used_str,
+                'Days Since Last Used': days_since_used,
+                'Max Session Duration (Hours)': max_session_duration,
+                'Cross-Account Access': cross_account_info,
+                'Service Usage': service_usage,
+                'Creation Date': creation_date,
+                'Path': role_path,
+                'Description': description,
+                'Tags': tags
+            }
 
-                role_data.append(role_info)
-
-                # Small delay to avoid API throttling
-                time.sleep(0.1)
-
-    except Exception as e:
-        utils.log_error("Error collecting IAM role information", e)
-        return []
+            role_data.append(role_info)
 
     utils.log_success(f"Successfully collected information for {len(role_data)} roles")
     return role_data
@@ -755,46 +666,41 @@ def get_policy_entities(iam_client, policy_arn):
         utils.log_warning(f"Could not get entities for policy {policy_arn}: {e}")
         return 'Unknown', 'Unknown', 'Unknown', 0
 
+@utils.aws_error_handler("Collecting managed policies", default_return=[])
 def collect_managed_policies(include_aws_managed=False):
     """Collect customer managed and optionally AWS managed policies."""
     policies_data = []
 
-    try:
-        iam_client = boto3.client('iam', region_name='us-west-2')
+    iam_client = utils.get_boto3_client('iam', region_name='us-west-2')
 
-        # Get customer managed policies
-        utils.log_info("Collecting customer managed policies...")
-        paginator = iam_client.get_paginator('list_policies')
+    # Get customer managed policies
+    utils.log_info("Collecting customer managed policies...")
+    paginator = iam_client.get_paginator('list_policies')
 
-        # Count total policies first
-        total_policies = 0
-        for page in paginator.paginate(Scope='Local'):
-            total_policies += len(page['Policies'])
+    # Count total policies first
+    total_policies = 0
+    for page in paginator.paginate(Scope='Local'):
+        total_policies += len(page['Policies'])
 
-        utils.log_info(f"Found {total_policies} managed policies to process")
+    utils.log_info(f"Found {total_policies} managed policies to process")
 
-        processed = 0
+    processed = 0
 
-        # Process customer managed policies
-        paginator = iam_client.get_paginator('list_policies')
-        for page in paginator.paginate(Scope='Local'):
-            policies = page['Policies']
+    # Process customer managed policies
+    paginator = iam_client.get_paginator('list_policies')
+    for page in paginator.paginate(Scope='Local'):
+        policies = page['Policies']
 
-            for policy in policies:
-                processed += 1
-                progress = (processed / total_policies) * 100
-                policy_name = policy['PolicyName']
+        for policy in policies:
+            processed += 1
+            progress = (processed / total_policies) * 100
+            policy_name = policy['PolicyName']
 
-                utils.log_info(f"[{progress:.1f}%] Processing policy {processed}/{total_policies}: {policy_name}")
+            utils.log_info(f"[{progress:.1f}%] Processing policy {processed}/{total_policies}: {policy_name}")
 
-                policy_info = process_managed_policy(iam_client, policy, 'Customer Managed')
-                if policy_info:
-                    policies_data.append(policy_info)
-
-                time.sleep(0.05)  # Small delay to avoid throttling
-
-    except Exception as e:
-        utils.log_error("Error collecting managed policies", e)
+            policy_info = process_managed_policy(iam_client, policy, 'Customer Managed')
+            if policy_info:
+                policies_data.append(policy_info)
 
     return policies_data
 
@@ -888,19 +794,25 @@ def export_to_excel(users_data, roles_data, policies_data, account_id, account_n
             current_date
         )
 
-        # Create data frames for multi-sheet export
+        # Create data frames for multi-sheet export with sanitization
         data_frames = {}
 
         if users_data:
             users_df = pd.DataFrame(users_data)
+            # Sanitize and prepare security-sensitive IAM user data
+            users_df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(users_df))
             data_frames['IAM Users'] = users_df
 
         if roles_data:
             roles_df = pd.DataFrame(roles_data)
+            # Sanitize and prepare security-sensitive IAM role data
+            roles_df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(roles_df))
             data_frames['IAM Roles'] = roles_df
 
         if policies_data:
             policies_df = pd.DataFrame(policies_data)
+            # Sanitize and prepare security-sensitive IAM policy data
+            policies_df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(policies_df))
             data_frames['IAM Policies'] = policies_df
 
         # Create comprehensive summary data
@@ -969,8 +881,8 @@ def export_to_excel(users_data, roles_data, policies_data, account_id, account_n
 def main():
     """Main function to orchestrate the comprehensive IAM information collection."""
     try:
-        # Check dependencies first
-        if not check_dependencies():
+        # Check dependencies using utils function
+        if not utils.ensure_dependencies('pandas', 'openpyxl'):
             return
 
         # Import pandas after dependency check
@@ -979,21 +891,17 @@ def main():
         # Print title and get account info
         account_id, account_name = print_title()
 
-        try:
-            # Test AWS credentials
-            sts = boto3.client('sts')
-            sts.get_caller_identity()
-            utils.log_success("AWS credentials validated")
-
-        except NoCredentialsError:
-            utils.log_error("AWS credentials not found. Please configure your credentials using:")
+        # Validate AWS credentials using utils
+        is_valid, validated_account_id, error_message = utils.validate_aws_credentials()
+        if not is_valid:
+            utils.log_error(f"AWS credentials validation failed: {error_message}")
+            print("Please configure your credentials using:")
             print("  - AWS CLI: aws configure")
             print("  - Environment variables: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
             print("  - IAM role (if running on EC2)")
             return
-        except Exception as e:
-            utils.log_error("Error validating AWS credentials", e)
-            return
+
+        utils.log_success("AWS credentials validated")
 
         utils.log_info("Starting comprehensive IAM information collection from AWS...")
         print("====================================================================")

@@ -1,12 +1,13 @@
 # StratusScan-CLI
 
-[![Python 3.6+](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![AWS](https://img.shields.io/badge/AWS-Commercial-orange.svg)](https://aws.amazon.com/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-> A comprehensive AWS resource export tool for multi-account, multi-region environments. Export detailed AWS infrastructure data to Excel with a single command.
+> A professional AWS resource export tool for multi-account, multi-region environments. Export detailed AWS infrastructure data to Excel with built-in cost estimation and intelligent optimization recommendations.
 
-[Quick Start](#-quick-start) • [Features](#-features) • [Installation](#-installation) • [Configuration](#%EF%B8%8F-configuration) • [Documentation](#-usage)
+[Quick Start](#-quick-start) • [Features](#-features) • [Installation](#-installation) • [Documentation](#-documentation) • [Contributing](#-contributing)
 
 ---
 
@@ -41,17 +42,27 @@ That's it! Select a resource to export from the menu and follow the prompts. Exp
 
 ## ✨ Features
 
+### Core Capabilities
 - **🎯 Centralized Menu Interface**: Easy-to-use hierarchical menu for all export tools
 - **🌍 Multi-Region Support**: Scan resources across specific regions or all AWS regions
 - **🏢 Account Mapping**: Translate AWS account IDs to friendly organization names
 - **📊 Standardized Exports**: Consistent Excel output with timestamp-based filenames
-- **📦 Export Archive**: Built-in functionality to zip all exports into a single file
-- **🔧 Dependency Management**: Automatic checking and installation of Python packages
-- **💰 Cost Optimization**: Integrated billing analysis and cost optimization recommendations
-- **📋 Comprehensive Reports**: All-in-one reports for Compute, Storage, and Network resources
-- **💵 Pricing Integration**: Built-in EC2 and EBS pricing data for cost calculations
-- **📝 Logging System**: Detailed audit trails with console and file output
 - **🔐 Read-Only Operations**: Safe, non-destructive AWS resource scanning
+
+### Advanced Features
+- **💰 Cost Estimation**: Built-in cost calculators for RDS, S3, NAT Gateway, and EC2 with pricing data
+- **🎯 Optimization Engine**: Intelligent recommendations for cost savings and resource optimization
+- **🔄 Progress Checkpointing**: Resume interrupted long-running operations automatically
+- **✅ Dry-Run Mode**: Validate exports before execution with built-in validation
+- **🔒 Data Sanitization**: Automatic detection and masking of sensitive data in exports
+- **📋 Comprehensive Reports**: All-in-one reports for Compute, Storage, and Network resources
+
+### Quality & Reliability
+- **✅ 75+ Automated Tests**: Comprehensive test coverage with pytest and CI/CD pipeline
+- **🔧 Error Handling**: Standardized error handling with automatic retry and exponential backoff
+- **📝 Detailed Logging**: Complete audit trails with console and file output
+- **🔍 Type Safety**: Full type hints for improved IDE support and static analysis
+- **🛡️ Security Scanning**: Pre-commit hooks with Bandit and credential detection
 
 ---
 
@@ -59,7 +70,7 @@ That's it! Select a resource to export from the menu and follow the prompts. Exp
 
 ### Requirements
 
-- **Python**: 3.6 or higher
+- **Python**: 3.9 or higher
 - **AWS Access**: Configured credentials (CLI, environment variables, or IAM role)
 - **Permissions**: Read-only access to AWS resources ([see details](#-aws-permissions))
 
@@ -69,6 +80,15 @@ The scripts will prompt to install missing packages automatically, or you can in
 
 ```bash
 pip install boto3 pandas openpyxl
+```
+
+### Developer Installation
+
+For contributors (includes testing and development tools):
+
+```bash
+pip install -e ".[dev]"
+pre-commit install  # Optional: Enable automated quality checks
 ```
 
 ### AWS Authentication
@@ -165,7 +185,7 @@ Run individual export scripts directly:
 
 ```bash
 python scripts/ec2-export.py
-python scripts/vpc-data-export.py
+python scripts/route53-export.py
 python scripts/iam-comprehensive-export.py
 ```
 
@@ -205,67 +225,7 @@ Attach these AWS managed policies to your IAM user/role:
 
 ### Custom IAM Policy
 
-For fine-grained control, use this custom policy:
-
-<details>
-<summary>Click to expand custom IAM policy</summary>
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "ec2:Describe*",
-                "s3:GetBucketLocation",
-                "s3:GetBucketVersioning",
-                "s3:ListBucket",
-                "s3:GetBucketAcl",
-                "s3:GetBucketPolicy",
-                "rds:Describe*",
-                "ecs:Describe*",
-                "ecs:List*",
-                "eks:Describe*",
-                "eks:List*",
-                "elasticloadbalancing:Describe*",
-                "iam:Get*",
-                "iam:List*",
-                "iam:GenerateCredentialReport",
-                "iam:GenerateServiceLastAccessedDetails",
-                "identitystore:Describe*",
-                "identitystore:List*",
-                "sso:Describe*",
-                "sso:List*",
-                "sso-admin:Describe*",
-                "sso-admin:List*",
-                "organizations:Describe*",
-                "organizations:List*",
-                "securityhub:Get*",
-                "securityhub:Describe*",
-                "securityhub:List*",
-                "route53:Get*",
-                "route53:List*",
-                "route53resolver:Get*",
-                "route53resolver:List*",
-                "ce:GetCostAndUsage",
-                "ce:GetCostForecast",
-                "ce:GetUsageReport",
-                "cur:DescribeReportDefinitions",
-                "cost-optimization-hub:List*",
-                "cost-optimization-hub:Get*",
-                "compute-optimizer:GetRecommendations*",
-                "compute-optimizer:Describe*",
-                "support:DescribeTrustedAdvisor*",
-                "support:RefreshTrustedAdvisorCheck",
-                "sts:GetCallerIdentity"
-            ],
-            "Resource": "*"
-        }
-    ]
-}
-```
-</details>
+For fine-grained control, see our [custom IAM policy template](https://github.com/ColonelPanicX/StratusScan-CLI/wiki/IAM-Permissions) in the wiki.
 
 ---
 
@@ -349,40 +309,25 @@ StratusScan supports **40+ AWS resource exporters** across multiple categories:
 All exports follow a consistent naming pattern:
 
 ```
-{ACCOUNT-NAME}-{RESOURCE-TYPE}-{REGION}-export-{MM.DD.YYYY}.xlsx
+{ACCOUNT-NAME}-{RESOURCE-TYPE}-{SUFFIX}-export-{MM.DD.YYYY}.xlsx
 ```
 
 **Examples:**
-- `PROD-ACCOUNT-ec2-us-east-1-export-10.27.2025.xlsx`
+- `PROD-ACCOUNT-ec2-running-export-10.27.2025.xlsx`
 - `DEV-ACCOUNT-route53-all-export-10.27.2025.xlsx`
 - `PROD-ACCOUNT-iam-comprehensive-export-10.27.2025.xlsx`
 
 **Archive:**
 - `ACCOUNT-NAME-export-MM.DD.YYYY.zip`
 
-### Directory Structure
+---
 
-```
-StratusScan-CLI/
-├── stratusscan.py              # Main menu interface
-├── configure.py                # Configuration wizard
-├── utils.py                    # Shared utilities
-├── config.json                 # Configuration file
-├── README.md                   # This file
-├── LICENSE                     # License information
-├── reference/                  # Pricing data
-│   ├── ec2-pricing.csv
-│   └── ebsvol-pricing.csv
-├── scripts/                    # Export scripts (40+)
-│   ├── ec2-export.py
-│   ├── route53-export.py
-│   ├── iam-comprehensive-export.py
-│   └── ... (and many more)
-├── logs/                       # Execution logs
-│   └── logs-{script}-{timestamp}.log
-└── output/                     # Export files
-    └── {exports}.xlsx
-```
+## 📚 Documentation
+
+- **[API Reference](API_REFERENCE.md)** - Complete API documentation with examples
+- **[Contributing Guide](CONTRIBUTING.md)** - How to contribute with script templates
+- **[Testing Guide](TESTING.md)** - Running tests and writing new tests
+- **[Wiki](https://github.com/ColonelPanicX/StratusScan-CLI/wiki)** - Detailed guides and tutorials
 
 ---
 
@@ -416,42 +361,46 @@ export AWS_SECRET_ACCESS_KEY="your-secret"
 - Type `all` to scan all regions
 - The tool validates regions and provides helpful error messages
 
-**Service Not Available**
-- Some services have limited regional availability
-- Check AWS service availability in your specific region
-- Try running the export in `us-east-1` which has the broadest service availability
-
-**Excel Export Errors**
-- Ensure `openpyxl` is installed: `pip install openpyxl`
-- Check disk space in the `output/` directory
-- Verify write permissions to the StratusScan directory
-
 ### Getting Help
 
 1. Check the log files in `logs/` directory for detailed error messages
 2. Verify your AWS credentials: `aws sts get-caller-identity`
-3. Ensure you're using valid AWS regions
-4. Review the `config.json` file for any misconfigurations
-5. Run `python configure.py --perms` to validate AWS permissions
+3. Run `python configure.py --perms` to validate AWS permissions
+4. Review our [Wiki](https://github.com/ColonelPanicX/StratusScan-CLI/wiki) for detailed guides
+5. Open an issue on GitHub with logs and error details
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Here's how you can help:
+Contributions are welcome! We've made it easy to get started:
 
-- **Report bugs**: Open an issue with details and reproduction steps
-- **Suggest features**: Share ideas for new AWS resource exporters
-- **Submit PRs**: Add new exporters following the existing patterns in `scripts/`
-- **Improve docs**: Help make the documentation clearer
+- **⚡ 30-Minute Onboarding**: Complete [contributor guide](CONTRIBUTING.md) with script templates
+- **🧪 Automated Testing**: 75+ tests with pytest and CI/CD pipeline
+- **✨ Code Quality**: Pre-commit hooks with Black, Ruff, and Bandit
+- **📚 API Documentation**: Full [API reference](API_REFERENCE.md) with examples
+- **🔒 Security First**: Automated credential detection and security scanning
 
-### Adding a New Exporter
+### Quick Start for Contributors
 
-1. Create a new script in `scripts/` following the existing pattern (see `route53-export.py` as reference)
-2. Import and use the `utils` module for consistency
-3. Add your script to the menu in `stratusscan.py`
-4. Test thoroughly across multiple regions
-5. Submit a pull request
+```bash
+# 1. Fork and clone
+git clone https://github.com/yourusername/StratusScan-CLI.git
+cd StratusScan-CLI
+
+# 2. Install development dependencies
+pip install -e ".[dev]"
+
+# 3. Set up pre-commit hooks (optional)
+pre-commit install
+
+# 4. Run tests
+pytest
+
+# 5. Make your changes and submit a PR
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines and script templates.
 
 ---
 
@@ -466,6 +415,20 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 - Built with assistance from [Claude Code](https://claude.ai/code)
 - Powered by [AWS SDK for Python (Boto3)](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html)
 - Excel export using [pandas](https://pandas.pydata.org/) and [openpyxl](https://openpyxl.readthedocs.io/)
+- Testing with [pytest](https://pytest.org/) and [moto](https://github.com/getmoto/moto)
+
+---
+
+## 📊 Project Status
+
+**Current Version**: 2.1.4 (Production Ready)
+
+- ✅ **75+ Automated Tests** - Comprehensive test coverage
+- ✅ **CI/CD Pipeline** - GitHub Actions testing Python 3.9-3.12
+- ✅ **Cost Estimation** - Built-in AWS cost calculators
+- ✅ **Type Safety** - Full type hints throughout codebase
+- ✅ **Security Scanning** - Pre-commit hooks with Bandit
+- ✅ **40+ Exporters** - Comprehensive AWS resource coverage
 
 ---
 

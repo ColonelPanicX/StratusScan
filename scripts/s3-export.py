@@ -16,14 +16,9 @@ using S3 Storage Lens where available. The data is exported to a spreadsheet fil
 a standardized naming convention including AWS identifiers for compliance and audit purposes.
 """
 
-import boto3
-import pandas as pd
 import sys
-import os
 import datetime
-import time
 import argparse
-from botocore.exceptions import ClientError
 from pathlib import Path
 
 # Add path to import utils module
@@ -52,24 +47,10 @@ except ImportError:
 def print_title():
     """
     Prints a formatted title banner for the script to the console and validates AWS environment
-    
+
     Returns:
         tuple: (account_id, account_name)
     """
-    # Get the current AWS account ID using STS
-    try:
-        sts_client = boto3.client('sts')
-        # Get the current account ID
-        account_id = sts_client.get_caller_identity()["Account"]
-        
-        # Validate AWS environment
-        caller_arn = sts_client.get_caller_identity()['Arn']
-        account_name = utils.get_account_name(account_id, default="UNKNOWN-ACCOUNT")
-    except Exception as e:
-        utils.log_error("Error retrieving account information", e)
-        account_id = "UNKNOWN"
-        account_name = "UNKNOWN-ACCOUNT"
-        
     # Print a formatted title banner
     print("====================================================================")
     print("                  AWS RESOURCE SCANNER                              ")
@@ -79,52 +60,15 @@ def print_title():
     print("Version: v2.0.0                       Date: AUG-19-2025")
     print("Environment: AWS Commercial")
     print("====================================================================")
+
+    # Get account information using utils
+    account_id, account_name = utils.get_account_info()
+
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")
-    
-    return account_id, account_name
 
-def check_dependencies():
-    """
-    Checks if required dependencies are installed and prompts the user to install if missing
-    
-    Returns:
-        bool: True if all dependencies are installed or user chose to install, False otherwise
-    """
-    required_packages = ['pandas', 'boto3', 'openpyxl']
-    missing_packages = []
-    
-    # Check for each required package
-    for package in required_packages:
-        try:
-            __import__(package)
-            utils.log_info(f"[OK] {package} is already installed")
-        except ImportError:
-            missing_packages.append(package)
-    
-    # If there are missing packages, prompt user to install
-    if missing_packages:
-        utils.log_warning(f"The following required packages are missing: {', '.join(missing_packages)}")
-        install_choice = input("Do you want to install these packages? ('y' for yes, 'n' for no): ")
-        
-        if install_choice.lower() == 'y':
-            # Attempt to install the missing packages
-            import subprocess
-            for package in missing_packages:
-                try:
-                    utils.log_info(f"Installing {package}...")
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                    utils.log_success(f"Successfully installed {package}")
-                except subprocess.CalledProcessError as e:
-                    utils.log_error(f"Failed to install {package}", e)
-                    return False
-            return True
-        else:
-            utils.log_error("Script cannot continue without required dependencies.")
-            return False
-    
-    return True
+    return account_id, account_name
 
 def get_aws_regions():
     """
@@ -156,41 +100,39 @@ def is_valid_aws_region(region_name):
     """
     return utils.validate_aws_region(region_name)
 
+@utils.aws_error_handler("Getting bucket region", default_return="unknown")
 def get_bucket_region(bucket_name):
     """
     Determine the region of a specific S3 bucket
-    
+
     Args:
         bucket_name (str): Name of the S3 bucket
-        
+
     Returns:
         str: AWS region name of the bucket
     """
-    # Create an S3 client without specifying a region
-    s3_client = boto3.client('s3')
-    
-    try:
-        # Get the bucket's location
-        response = s3_client.get_bucket_location(Bucket=bucket_name)
-        location = response['LocationConstraint']
-        
-        # In AWS, handle the location constraint differently
-        if location is None:
-            # For AWS, None typically means us-west-2 (default AWS region)
-            return 'us-west-2'
-        return location
-    except Exception as e:
-        utils.log_warning(f"Error getting region for bucket {bucket_name}: {e}")
-        return "unknown"
+    # Create S3 client using utils
+    s3_client = utils.get_boto3_client('s3')
 
+    # Get the bucket's location
+    response = s3_client.get_bucket_location(Bucket=bucket_name)
+    location = response['LocationConstraint']
+
+    # In AWS, handle the location constraint differently
+    if location is None:
+        # For AWS, None typically means us-west-2 (default AWS region)
+        return 'us-west-2'
+    return location
+
+@utils.aws_error_handler("Getting bucket object count", default_return=0)
 def get_bucket_object_count(bucket_name, region):
     """
     Get the total number of objects in a bucket
-    
+
     Args:
         bucket_name (str): Name of the S3 bucket
         region (str): AWS region where the bucket is located
-        
+
     Returns:
         int: Total number of objects in the bucket
     """
@@ -198,25 +140,21 @@ def get_bucket_object_count(bucket_name, region):
     if not utils.validate_aws_region(region):
         utils.log_error(f"Invalid AWS region: {region}")
         return 0
-    
-    # Create an S3 client in the bucket's region
-    s3_client = boto3.client('s3', region_name=region)
-    
+
+    # Create S3 client using utils
+    s3_client = utils.get_boto3_client('s3', region_name=region)
+
     total_objects = 0
-    
-    try:
-        # Use a paginator to handle buckets with many objects
-        paginator = s3_client.get_paginator('list_objects_v2')
-        
-        # Paginate through all objects in the bucket
-        for page in paginator.paginate(Bucket=bucket_name):
-            if 'Contents' in page:
-                total_objects += len(page['Contents'])
-                    
-        return total_objects
-    except Exception as e:
-        utils.log_warning(f"Error counting objects for bucket {bucket_name}: {e}")
-        return 0
+
+    # Use a paginator to handle buckets with many objects
+    paginator = s3_client.get_paginator('list_objects_v2')
+
+    # Paginate through all objects in the bucket
+    for page in paginator.paginate(Bucket=bucket_name):
+        if 'Contents' in page:
+            total_objects += len(page['Contents'])
+
+    return total_objects
 
 def check_storage_lens_availability():
     """
@@ -227,10 +165,10 @@ def check_storage_lens_availability():
     """
     try:
         # Create S3 Control client in a AWS region
-        s3control_client = boto3.client('s3control', region_name='us-east-1')
+        s3control_client = utils.get_boto3_client('s3control', region_name='us-east-1')
         
         # Get caller identity for Account ID
-        account_id = boto3.client('sts').get_caller_identity()["Account"]
+        account_id = utils.get_boto3_client('sts').get_caller_identity()["Account"]
         
         # List Storage Lens configurations
         response = s3control_client.list_storage_lens_configurations(
@@ -261,7 +199,7 @@ def get_latest_storage_lens_data(account_id):
     """
     try:
         # Create S3 Control client in AWS region
-        s3control_client = boto3.client('s3control', region_name='us-east-1')
+        s3control_client = utils.get_boto3_client('s3control', region_name='us-east-1')
         
         # List Storage Lens configurations
         configurations = s3control_client.list_storage_lens_configurations(
@@ -286,10 +224,10 @@ def get_latest_storage_lens_data(account_id):
         
         for region in aws_regions:
             try:
-                cw_client = boto3.client('cloudwatch', region_name=region)
+                cw_client = utils.get_boto3_client('cloudwatch', region_name=region)
                 
                 # Get a list of all buckets
-                s3_client = boto3.client('s3')
+                s3_client = utils.get_boto3_client('s3')
                 buckets = [bucket['Name'] for bucket in s3_client.list_buckets()['Buckets']]
                 
                 for bucket_name in buckets:
@@ -376,133 +314,134 @@ def convert_to_mb(size_in_bytes):
     except (ValueError, TypeError):
         return "0"
 
+@utils.aws_error_handler("Collecting S3 buckets", default_return=[])
 def get_s3_buckets_info(use_storage_lens=False, target_region=None):
     """
     Collect information about S3 buckets across AWS regions or a specific AWS region
-    
+
     Args:
         use_storage_lens (bool): Whether to try using Storage Lens for size metrics
         target_region (str): Specific AWS region to target or None for all AWS regions
-        
+
     Returns:
         list: List of dictionaries containing bucket information
     """
     # Initialize global S3 client to list all buckets
-    s3_client = boto3.client('s3')
-    
+    s3_client = utils.get_boto3_client('s3')
+
     all_buckets_info = []
     storage_lens_data = {}
-    
+
     # Get account ID
-    account_id = boto3.client('sts').get_caller_identity()["Account"]
-    
+    account_id = utils.get_boto3_client('sts').get_caller_identity()["Account"]
+
     # Validate target region if specified
     if target_region and not utils.validate_aws_region(target_region):
         utils.log_error(f"Invalid AWS region: {target_region}")
         return []
-    
+
     # Try to get Storage Lens data if requested
     if use_storage_lens:
         storage_lens_data = get_latest_storage_lens_data(account_id)
-    
-    try:
-        # Get the list of all buckets
-        response = s3_client.list_buckets()
-        
-        # Filter the buckets based on the target AWS region
-        buckets_to_process = []
-        for bucket in response['Buckets']:
-            bucket_name = bucket['Name']
-            
-            # Get the bucket's region if we need to filter
-            if target_region:
-                region = get_bucket_region(bucket_name)
-                
-                # Only include buckets in the specified AWS region
-                if region == target_region:
-                    buckets_to_process.append(bucket)
-            else:
-                # For all regions, check if bucket is in any AWS region
-                region = get_bucket_region(bucket_name)
-                if utils.is_aws_region(region):
-                    buckets_to_process.append(bucket)
-                
-        total_buckets = len(buckets_to_process)
-        utils.log_info(f"Found {total_buckets} S3 buckets" + 
-              (f" in AWS region {target_region}" if target_region else " across all AWS regions") + 
-              ". Gathering details for each bucket...")
-        
-        # Process each bucket
-        for i, bucket in enumerate(buckets_to_process, 1):
-            bucket_name = bucket['Name']
-            creation_date = bucket['CreationDate']
-            
-            progress = (i / total_buckets) * 100
-            utils.log_info(f"[{progress:.1f}%] Processing bucket {i}/{total_buckets}: {bucket_name}")
-            
-            # Get the bucket's region if we haven't already
-            if target_region:
-                region = target_region
-            else:
-                region = get_bucket_region(bucket_name)
-            
-            # Initialize size and object count
-            size_bytes = 0
-            object_count = 0
-            
-            # Try to get info from Storage Lens if available
-            if bucket_name in storage_lens_data:
-                size_bytes = storage_lens_data[bucket_name]['size_bytes']
-                object_count = storage_lens_data[bucket_name]['object_count']
-                size_source = "Storage Lens/CloudWatch"
-            else:
-                # Fall back to counting objects directly
-                object_count = get_bucket_object_count(bucket_name, region)
-                size_source = "Not Available"
-            
-            # Convert size to MB
-            size_mb = convert_to_mb(size_bytes)
-            
-            # Get owner information
-            owner_id = utils.get_account_name_formatted(account_id)
-            
-            # Add bucket info to our list
-            bucket_info = {
-                'Bucket Name': bucket_name,
-                'Region': region,
-                'Creation Date': creation_date,
-                'Object Count': object_count,
-                'Size (MB)': size_mb,
-                'Size Source': size_source,
-                'Owner': owner_id
-            }
-            
-            all_buckets_info.append(bucket_info)
 
-            # Small delay to avoid API throttling
-            if i < total_buckets:  # Don't delay after the last bucket
-                time.sleep(0.2)
-            
-    except Exception as e:
-        utils.log_error("Error retrieving S3 bucket information", e)
-    
+    # Get the list of all buckets
+    response = s3_client.list_buckets()
+
+    # Filter the buckets based on the target AWS region
+    buckets_to_process = []
+    for bucket in response['Buckets']:
+        bucket_name = bucket['Name']
+
+        # Get the bucket's region if we need to filter
+        if target_region:
+            region = get_bucket_region(bucket_name)
+
+            # Only include buckets in the specified AWS region
+            if region == target_region:
+                buckets_to_process.append(bucket)
+        else:
+            # For all regions, check if bucket is in any AWS region
+            region = get_bucket_region(bucket_name)
+            if utils.is_aws_region(region):
+                buckets_to_process.append(bucket)
+
+    total_buckets = len(buckets_to_process)
+    utils.log_info(f"Found {total_buckets} S3 buckets" +
+          (f" in AWS region {target_region}" if target_region else " across all AWS regions") +
+          ". Gathering details for each bucket...")
+
+    # Process each bucket
+    for i, bucket in enumerate(buckets_to_process, 1):
+        bucket_name = bucket['Name']
+        creation_date = bucket['CreationDate']
+
+        progress = (i / total_buckets) * 100
+        utils.log_info(f"[{progress:.1f}%] Processing bucket {i}/{total_buckets}: {bucket_name}")
+
+        # Get the bucket's region if we haven't already
+        if target_region:
+            region = target_region
+        else:
+            region = get_bucket_region(bucket_name)
+
+        # Initialize size and object count
+        size_bytes = 0
+        object_count = 0
+
+        # Try to get info from Storage Lens if available
+        if bucket_name in storage_lens_data:
+            size_bytes = storage_lens_data[bucket_name]['size_bytes']
+            object_count = storage_lens_data[bucket_name]['object_count']
+            size_source = "Storage Lens/CloudWatch"
+        else:
+            # Fall back to counting objects directly
+            object_count = get_bucket_object_count(bucket_name, region)
+            size_source = "Not Available"
+
+        # Convert size to MB
+        size_mb = convert_to_mb(size_bytes)
+
+        # Get owner information
+        owner_id = utils.get_account_name_formatted(account_id)
+
+        # Add bucket info to our list
+        bucket_info = {
+            'Bucket Name': bucket_name,
+            'Region': region,
+            'Creation Date': creation_date,
+            'Object Count': object_count,
+            'Size (MB)': size_mb,
+            'Size Source': size_source,
+            'Owner': owner_id
+        }
+
+        all_buckets_info.append(bucket_info)
+
     return all_buckets_info
 
 def export_to_excel(buckets_info, account_name, target_region=None):
     """
     Export bucket information to an Excel file with AWS identifier
-    
+
     Args:
         buckets_info (list): List of dictionaries with bucket information
         account_name (str): Name of the AWS account for file naming
         target_region (str): Specific AWS region being targeted (or None for all)
-        
+
     Returns:
         str: Path to the created file
     """
+    # Import pandas here to avoid issues if it's not installed
+    import pandas as pd
+
     # Create a DataFrame from the bucket information
     df = pd.DataFrame(buckets_info)
-    
+
+    # Prepare and sanitize DataFrame (tags may contain secrets)
+    df = utils.sanitize_for_export(
+        utils.prepare_dataframe_for_export(df)
+    )
+
     # Reorder columns for better readability
     column_order = [
         'Bucket Name', 
@@ -551,18 +490,26 @@ def export_to_excel(buckets_info, account_name, target_region=None):
 def export_to_csv(buckets_info, account_name, target_region=None):
     """
     Export bucket information to a CSV file with AWS identifier
-    
+
     Args:
         buckets_info (list): List of dictionaries with bucket information
         account_name (str): Name of the AWS account for file naming
         target_region (str): Specific AWS region being targeted (or None for all)
-        
+
     Returns:
         str: Path to the created file
     """
+    # Import pandas here to avoid issues if it's not installed
+    import pandas as pd
+
     # Create a DataFrame from the bucket information
     df = pd.DataFrame(buckets_info)
-    
+
+    # Prepare and sanitize DataFrame (tags may contain secrets)
+    df = utils.sanitize_for_export(
+        utils.prepare_dataframe_for_export(df)
+    )
+
     # Reorder columns for better readability
     column_order = [
         'Bucket Name', 
@@ -604,9 +551,9 @@ def main():
     """
     # Print script title and get account information
     account_id, account_name = print_title()
-    
+
     # Check if required dependencies are installed
-    if not check_dependencies():
+    if not utils.ensure_dependencies('pandas', 'openpyxl'):
         return
     
     # Create argument parser
@@ -626,6 +573,7 @@ def main():
     # Check for non-interactive mode
     if args.non_interactive:
         # Use environment variables for configuration
+        import os
         region_input = os.environ.get('AWS_REGION', 'all')
     else:
         # Prompt user for AWS region selection

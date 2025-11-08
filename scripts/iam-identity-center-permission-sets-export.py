@@ -306,8 +306,7 @@ def export_permission_sets_to_text():
     try:
         # Initialize SSO Admin client
         utils.log_info("Initializing AWS SSO Admin client for AWS")
-        session = boto3.Session()
-        sso_admin_client = session.client('sso-admin', region_name='us-west-2')
+        sso_admin_client = utils.get_boto3_client('sso-admin', region_name='us-west-2')
 
         # Get SSO instance
         utils.log_info("Retrieving SSO instance information")
@@ -413,17 +412,16 @@ def main():
 
     # Check AWS credentials
     try:
-        session = boto3.Session()
-        credentials = session.get_credentials()
-        if not credentials:
-            print("ERROR: No AWS credentials found.")
-            print("Please configure your AWS credentials using one of the following methods:")
-            print("  - AWS CLI: aws configure")
-            print("  - Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY")
-            print("  - IAM instance profile (when running on EC2)")
-            return
+        # Try to create a client to verify credentials
+        sts = utils.get_boto3_client('sts')
+        sts.get_caller_identity()
     except Exception as e:
-        print(f"ERROR: Could not check AWS credentials: {str(e)}")
+        print("ERROR: No AWS credentials found or invalid.")
+        print("Please configure your AWS credentials using one of the following methods:")
+        print("  - AWS CLI: aws configure")
+        print("  - Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY")
+        print("  - IAM instance profile (when running on EC2)")
+        print(f"Error details: {str(e)}")
         return
 
     # Validate AWS environment
