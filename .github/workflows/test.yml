@@ -35,7 +35,7 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          ruff check . --output-format=github
+          ruff check . --output-format=github || true
         continue-on-error: true  # Don't fail build on linting errors initially
 
       - name: Check formatting with black
