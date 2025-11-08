@@ -29,13 +29,13 @@ Usage:
 - python configure.py --perms  (AWS permissions check only)
 """
 
-import os
-import sys
 import json
 import re
 import subprocess
-import boto3
+import sys
 from pathlib import Path
+
+import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
 def print_header():
@@ -51,16 +51,16 @@ def print_header():
 def validate_account_id(account_id):
     """
     Validate that the account ID is a 12-digit number.
-    
+
     Args:
         account_id (str): The account ID to validate
-        
+
     Returns:
         bool: True if valid, False otherwise
     """
     # Remove any whitespace
     account_id = account_id.strip()
-    
+
     # Check if it's exactly 12 digits
     pattern = re.compile(r'^\d{12}$')
     return bool(pattern.match(account_id))
@@ -109,21 +109,21 @@ def get_aws_region_choice():
 def load_existing_config(config_path):
     """
     Load existing configuration file if it exists.
-    
+
     Args:
         config_path (Path): Path to the config file
-        
+
     Returns:
         dict: Existing configuration or default structure
     """
     if config_path.exists():
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
+        except (json.JSONDecodeError, OSError) as e:
             print(f"Warning: Could not read existing config file: {e}")
             print("Creating new configuration...")
-    
+
     # Return default AWS configuration structure
     return {
         "__comment": "StratusScan Configuration - Customize this file for your environment",
