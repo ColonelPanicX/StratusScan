@@ -427,11 +427,26 @@ def get_menu_structure():
                     "description": "Export route table information"
                 },
                 "6": {
+                    "name": "CloudFront",
+                    "file": scripts_dir / "cloudfront-export.py",
+                    "description": "Export CloudFront distribution configurations, origins, and cache behaviors"
+                },
+                "7": {
+                    "name": "Transit Gateway",
+                    "file": scripts_dir / "transit-gateway-export.py",
+                    "description": "Export Transit Gateway configurations, attachments, route tables, and routes"
+                },
+                "8": {
+                    "name": "AWS Network Firewall",
+                    "file": scripts_dir / "network-firewall-export.py",
+                    "description": "Export Network Firewall configurations, policies, rule groups, and logging settings"
+                },
+                "9": {
                     "name": "All Network Resources",
                     "file": scripts_dir / "network-resources.py",
                     "description": "Export all network resources (VPC, ELB, NACLs, Security Groups, Route Tables) in one comprehensive report"
                 },
-                "7": {
+                "10": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
