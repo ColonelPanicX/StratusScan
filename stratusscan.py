@@ -751,6 +751,36 @@ def get_menu_structure():
             }
         },
         "12": {
+            "name": "Analytics & Data",
+            "submenu": {
+                "1": {
+                    "name": "OpenSearch Service",
+                    "file": scripts_dir / "opensearch-export.py",
+                    "description": "Export OpenSearch domains, VPC configs, encryption, access policies, and snapshots"
+                },
+                "2": {
+                    "name": "Redshift",
+                    "file": scripts_dir / "redshift-export.py",
+                    "description": "Export Redshift data warehouse clusters, snapshots, parameter groups, and subnet groups"
+                },
+                "3": {
+                    "name": "Glue & Athena",
+                    "file": scripts_dir / "glue-athena-export.py",
+                    "description": "Export Glue databases, tables, crawlers, jobs, and Athena workgroups/catalogs"
+                },
+                "4": {
+                    "name": "Lake Formation",
+                    "file": scripts_dir / "lakeformation-export.py",
+                    "description": "Export Lake Formation resources, permissions, data lake settings, and LF-Tags"
+                },
+                "5": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "13": {
             "name": "Output Management",
             "submenu": {
                 "1": {
