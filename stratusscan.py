@@ -502,6 +502,26 @@ def get_menu_structure():
                     "description": "Export Security Hub findings with severity, compliance status, and remediation guidance"
                 },
                 "2": {
+                    "name": "KMS (Key Management Service)",
+                    "file": scripts_dir / "kms-export.py",
+                    "description": "Export KMS keys, aliases, grants, rotation status, and encryption configurations"
+                },
+                "3": {
+                    "name": "Secrets Manager",
+                    "file": scripts_dir / "secrets-manager-export.py",
+                    "description": "Export Secrets Manager secrets metadata, rotation configs, and replication settings (no secret values)"
+                },
+                "4": {
+                    "name": "ACM (Certificate Manager)",
+                    "file": scripts_dir / "acm-export.py",
+                    "description": "Export ACM SSL/TLS certificates with validation methods, expiration dates, and usage tracking"
+                },
+                "5": {
+                    "name": "IAM Access Analyzer",
+                    "file": scripts_dir / "access-analyzer-export.py",
+                    "description": "Export Access Analyzer findings, analyzers, archive rules, and external access detection"
+                },
+                "6": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
