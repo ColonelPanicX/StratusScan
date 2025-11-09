@@ -362,11 +362,31 @@ def get_menu_structure():
                     "description": "Export Auto Scaling Group configurations, instances, and scaling policies"
                 },
                 "6": {
+                    "name": "Lambda Functions",
+                    "file": scripts_dir / "lambda-export.py",
+                    "description": "Export Lambda function configurations, event sources, and concurrency settings"
+                },
+                "7": {
+                    "name": "ECR (Elastic Container Registry)",
+                    "file": scripts_dir / "ecr-export.py",
+                    "description": "Export ECR repositories, images, vulnerability scans, and lifecycle policies"
+                },
+                "8": {
+                    "name": "AMI (Amazon Machine Images)",
+                    "file": scripts_dir / "ami-export.py",
+                    "description": "Export account-owned AMIs with architecture, platform, and snapshot details"
+                },
+                "9": {
+                    "name": "EC2 Image Builder",
+                    "file": scripts_dir / "image-builder-export.py",
+                    "description": "Export Image Builder pipelines, recipes, components, and infrastructure configurations"
+                },
+                "10": {
                     "name": "All Compute Resources",
                     "file": scripts_dir / "compute-resources.py",
                     "description": "Export all compute resources (EC2, RDS, EKS, ECS) in one comprehensive report"
                 },
-                "7": {
+                "11": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
