@@ -103,5 +103,7 @@ IMPLEMENTATION_SUMMARY.md
 VALIDATION_SUMMARY.md
 QUICK_REFERENCE.md
 
-# Audit directory
+# Audit directory and milestone tracking
 .AUDIT/
+MILESTONE*.md
+*MILESTONE*.md
