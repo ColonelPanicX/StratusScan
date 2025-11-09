@@ -412,11 +412,26 @@ def get_menu_structure():
                     "description": "Export S3 bucket information"
                 },
                 "4": {
+                    "name": "EFS (Elastic File System)",
+                    "file": scripts_dir / "efs-export.py",
+                    "description": "Export EFS file systems, mount targets, and access points"
+                },
+                "5": {
+                    "name": "FSx",
+                    "file": scripts_dir / "fsx-export.py",
+                    "description": "Export FSx file systems (Windows, Lustre, ONTAP, OpenZFS) and backups"
+                },
+                "6": {
+                    "name": "AWS Backup",
+                    "file": scripts_dir / "backup-export.py",
+                    "description": "Export AWS Backup vaults, backup plans, and backup selections"
+                },
+                "7": {
                     "name": "All Storage Resources",
                     "file": scripts_dir / "storage-resources.py",
                     "description": "Export all storage resources (EBS, S3) in one comprehensive report"
                 },
-                "5": {
+                "8": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
