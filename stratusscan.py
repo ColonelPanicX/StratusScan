@@ -502,26 +502,46 @@ def get_menu_structure():
                     "description": "Export Security Hub findings with severity, compliance status, and remediation guidance"
                 },
                 "2": {
+                    "name": "GuardDuty",
+                    "file": scripts_dir / "guardduty-export.py",
+                    "description": "Export GuardDuty detectors, findings, threat intel sets, and IP sets for threat detection"
+                },
+                "3": {
+                    "name": "AWS WAF",
+                    "file": scripts_dir / "waf-export.py",
+                    "description": "Export WAF web ACLs, rules, IP sets, and regex patterns for application protection"
+                },
+                "4": {
+                    "name": "CloudTrail",
+                    "file": scripts_dir / "cloudtrail-export.py",
+                    "description": "Export CloudTrail trails, event selectors, and insight selectors for audit logging"
+                },
+                "5": {
+                    "name": "AWS Config",
+                    "file": scripts_dir / "config-export.py",
+                    "description": "Export Config recorders, rules, compliance status, and conformance packs"
+                },
+                "6": {
                     "name": "KMS (Key Management Service)",
                     "file": scripts_dir / "kms-export.py",
                     "description": "Export KMS keys, aliases, grants, rotation status, and encryption configurations"
                 },
-                "3": {
+                "7": {
                     "name": "Secrets Manager",
                     "file": scripts_dir / "secrets-manager-export.py",
                     "description": "Export Secrets Manager secrets metadata, rotation configs, and replication settings (no secret values)"
                 },
-                "4": {
+                "8": {
                     "name": "ACM (Certificate Manager)",
                     "file": scripts_dir / "acm-export.py",
                     "description": "Export ACM SSL/TLS certificates with validation methods, expiration dates, and usage tracking"
                 },
-                "5": {
+                "9": {
                     "name": "IAM Access Analyzer",
                     "file": scripts_dir / "access-analyzer-export.py",
                     "description": "Export Access Analyzer findings, analyzers, archive rules, and external access detection"
                 },
-                "6": {
+                "10": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"

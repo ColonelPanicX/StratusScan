@@ -1,0 +1,570 @@
+#!/usr/bin/env python3
+"""
+===========================
+= AWS RESOURCE SCANNER =
+===========================
+
+Title: AWS Config Export Tool
+Version: v1.0.0
+Date: NOV-09-2025
+
+Description:
+This script exports AWS Config configuration and compliance information from all regions
+into an Excel file with multiple worksheets. The output includes recorders, delivery
+channels, config rules, compliance status, and conformance packs.
+
+Features:
+- Configuration recorders with recording status
+- Delivery channels (S3 and SNS)
+- Config rules with compliance status
+- Resource compliance summaries
+- Conformance packs for grouped compliance
+- Aggregators for multi-account/multi-region views
+- Retention configurations
+"""
+
+import sys
+import datetime
+from pathlib import Path
+from typing import List, Dict, Any
+
+# Add path to import utils module
+try:
+    import utils
+except ImportError:
+    script_dir = Path(__file__).parent.absolute()
+
+    if script_dir.name.lower() == 'scripts':
+        sys.path.append(str(script_dir.parent))
+    else:
+        sys.path.append(str(script_dir))
+
+    try:
+        import utils
+    except ImportError:
+        print("ERROR: Could not import the utils module. Make sure utils.py is in the StratusScan directory.")
+        sys.exit(1)
+
+# Initialize logging
+SCRIPT_START_TIME = datetime.datetime.now()
+utils.setup_logging("config-export")
+utils.log_script_start("config-export.py", "AWS Config Export Tool")
+
+
+def print_title():
+    """Print the title and header of the script to the console."""
+    print("====================================================================")
+    print("                  AWS RESOURCE SCANNER                    ")
+    print("====================================================================")
+    print("                  AWS CONFIG EXPORT TOOL")
+    print("====================================================================")
+    print("Version: v1.0.0                        Date: NOV-09-2025")
+    print("Environment: AWS Commercial")
+    print("====================================================================")
+
+    # Get the current AWS account ID
+    try:
+        sts_client = utils.get_boto3_client('sts')
+        account_id = sts_client.get_caller_identity().get('Account')
+        account_name = utils.get_account_name(account_id, default=account_id)
+
+        print(f"Account ID: {account_id}")
+        print(f"Account Name: {account_name}")
+    except Exception as e:
+        print("Could not determine account information.")
+        utils.log_error("Error getting account information", e)
+        account_id = "unknown"
+        account_name = "unknown"
+
+    print("====================================================================")
+    return account_id, account_name
+
+
+def get_aws_regions():
+    """Get a list of available AWS regions."""
+    try:
+        regions = utils.get_available_aws_regions()
+        if not regions:
+            utils.log_warning("No accessible AWS regions found. Using default list.")
+            regions = utils.get_default_regions()
+        return regions
+    except Exception as e:
+        utils.log_error("Error getting AWS regions", e)
+        return utils.get_default_regions()
+
+
+@utils.aws_error_handler("Collecting Config recorders", default_return=[])
+def collect_configuration_recorders(regions: List[str]) -> List[Dict[str, Any]]:
+    """
+    Collect AWS Config configuration recorder information.
+
+    Args:
+        regions: List of AWS regions to scan
+
+    Returns:
+        list: List of dictionaries with recorder information
+    """
+    print("\n=== COLLECTING CONFIGURATION RECORDERS ===")
+    all_recorders = []
+
+    for region in regions:
+        if not utils.validate_aws_region(region):
+            utils.log_error(f"Skipping invalid AWS region: {region}")
+            continue
+
+        print(f"\nProcessing region: {region}")
+
+        try:
+            config_client = utils.get_boto3_client('config', region_name=region)
+
+            # Describe configuration recorders
+            recorders_response = config_client.describe_configuration_recorders()
+            recorders = recorders_response.get('ConfigurationRecorders', [])
+
+            for recorder in recorders:
+                recorder_name = recorder.get('name', '')
+                print(f"  Processing recorder: {recorder_name}")
+
+                # Role ARN
+                role_arn = recorder.get('roleARN', '')
+
+                # Recording group
+                recording_group = recorder.get('recordingGroup', {})
+                all_supported = recording_group.get('allSupported', False)
+                include_global_resources = recording_group.get('includeGlobalResourceTypes', False)
+                resource_types = recording_group.get('resourceTypes', [])
+                resource_type_count = len(resource_types)
+
+                # Get recorder status
+                try:
+                    status_response = config_client.describe_configuration_recorder_status(
+                        ConfigurationRecorderNames=[recorder_name]
+                    )
+                    statuses = status_response.get('ConfigurationRecordersStatus', [])
+
+                    if statuses:
+                        status = statuses[0]
+                        recording = status.get('recording', False)
+                        last_status = status.get('lastStatus', 'N/A')
+
+                        last_start_time = status.get('lastStartTime', '')
+                        if last_start_time:
+                            last_start_time = last_start_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_start_time, datetime.datetime) else str(last_start_time)
+
+                        last_stop_time = status.get('lastStopTime', '')
+                        if last_stop_time:
+                            last_stop_time = last_stop_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_stop_time, datetime.datetime) else str(last_stop_time)
+
+                        last_status_change = status.get('lastStatusChangeTime', '')
+                        if last_status_change:
+                            last_status_change = last_status_change.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_status_change, datetime.datetime) else str(last_status_change)
+                    else:
+                        recording = False
+                        last_status = 'Unknown'
+                        last_start_time = 'N/A'
+                        last_stop_time = 'N/A'
+                        last_status_change = 'N/A'
+
+                except Exception:
+                    recording = False
+                    last_status = 'Unknown'
+                    last_start_time = 'N/A'
+                    last_stop_time = 'N/A'
+                    last_status_change = 'N/A'
+
+                all_recorders.append({
+                    'Region': region,
+                    'Recorder Name': recorder_name,
+                    'Recording': recording,
+                    'Last Status': last_status,
+                    'Role ARN': role_arn,
+                    'All Supported': all_supported,
+                    'Include Global Resources': include_global_resources,
+                    'Resource Type Count': resource_type_count,
+                    'Last Start': last_start_time,
+                    'Last Stop': last_stop_time if last_stop_time != 'N/A' else 'N/A',
+                    'Last Status Change': last_status_change
+                })
+
+        except Exception as e:
+            utils.log_error(f"Error processing region {region} for Config recorders", e)
+
+    utils.log_success(f"Total configuration recorders collected: {len(all_recorders)}")
+    return all_recorders
+
+
+@utils.aws_error_handler("Collecting delivery channels", default_return=[])
+def collect_delivery_channels(regions: List[str]) -> List[Dict[str, Any]]:
+    """
+    Collect AWS Config delivery channel information.
+
+    Args:
+        regions: List of AWS regions to scan
+
+    Returns:
+        list: List of dictionaries with delivery channel information
+    """
+    print("\n=== COLLECTING DELIVERY CHANNELS ===")
+    all_channels = []
+
+    for region in regions:
+        if not utils.validate_aws_region(region):
+            continue
+
+        print(f"\nProcessing region: {region}")
+
+        try:
+            config_client = utils.get_boto3_client('config', region_name=region)
+
+            # Describe delivery channels
+            channels_response = config_client.describe_delivery_channels()
+            channels = channels_response.get('DeliveryChannels', [])
+
+            for channel in channels:
+                channel_name = channel.get('name', '')
+
+                # S3 bucket
+                s3_bucket = channel.get('s3BucketName', '')
+
+                # S3 key prefix
+                s3_prefix = channel.get('s3KeyPrefix', 'N/A')
+
+                # S3 KMS key
+                s3_kms_key = channel.get('s3KmsKeyArn', 'N/A')
+
+                # SNS topic
+                sns_topic = channel.get('snsTopicARN', 'N/A')
+
+                # Config snapshot delivery properties
+                snapshot_props = channel.get('configSnapshotDeliveryProperties', {})
+                delivery_frequency = snapshot_props.get('deliveryFrequency', 'N/A')
+
+                all_channels.append({
+                    'Region': region,
+                    'Channel Name': channel_name,
+                    'S3 Bucket': s3_bucket,
+                    'S3 Prefix': s3_prefix,
+                    'S3 KMS Key': s3_kms_key,
+                    'SNS Topic': sns_topic,
+                    'Delivery Frequency': delivery_frequency
+                })
+
+        except Exception as e:
+            utils.log_error(f"Error collecting delivery channels in region {region}", e)
+
+    utils.log_success(f"Total delivery channels collected: {len(all_channels)}")
+    return all_channels
+
+
+@utils.aws_error_handler("Collecting Config rules", default_return=[])
+def collect_config_rules(regions: List[str]) -> List[Dict[str, Any]]:
+    """
+    Collect AWS Config rule information with compliance status.
+
+    Args:
+        regions: List of AWS regions to scan
+
+    Returns:
+        list: List of dictionaries with config rule information
+    """
+    print("\n=== COLLECTING CONFIG RULES ===")
+    all_rules = []
+
+    for region in regions:
+        if not utils.validate_aws_region(region):
+            continue
+
+        print(f"\nProcessing region: {region}")
+
+        try:
+            config_client = utils.get_boto3_client('config', region_name=region)
+
+            # Describe config rules
+            rules_paginator = config_client.get_paginator('describe_config_rules')
+
+            for rules_page in rules_paginator.paginate():
+                rules = rules_page.get('ConfigRules', [])
+
+                for rule in rules:
+                    rule_name = rule.get('ConfigRuleName', '')
+                    rule_arn = rule.get('ConfigRuleArn', '')
+                    rule_id = rule.get('ConfigRuleId', '')
+
+                    # Description
+                    description = rule.get('Description', 'N/A')
+
+                    # Source
+                    source = rule.get('Source', {})
+                    source_identifier = source.get('SourceIdentifier', '')
+                    owner = source.get('Owner', '')
+
+                    # State
+                    state = rule.get('ConfigRuleState', '')
+
+                    # Get compliance status
+                    compliance_status = 'UNKNOWN'
+                    compliant_count = 0
+                    non_compliant_count = 0
+
+                    try:
+                        compliance_response = config_client.describe_compliance_by_config_rule(
+                            ConfigRuleNames=[rule_name]
+                        )
+                        compliance_results = compliance_response.get('ComplianceByConfigRules', [])
+
+                        if compliance_results:
+                            compliance = compliance_results[0].get('Compliance', {})
+                            compliance_status = compliance.get('ComplianceType', 'UNKNOWN')
+
+                            # Get detailed counts
+                            try:
+                                summary_response = config_client.get_compliance_summary_by_config_rule()
+                                summary = summary_response.get('ComplianceSummary', {})
+                                compliant_summary = summary.get('CompliantResourceCount', {})
+                                non_compliant_summary = summary.get('NonCompliantResourceCount', {})
+                                compliant_count = compliant_summary.get('CappedCount', 0)
+                                non_compliant_count = non_compliant_summary.get('CappedCount', 0)
+                            except:
+                                pass
+
+                    except Exception:
+                        pass
+
+                    all_rules.append({
+                        'Region': region,
+                        'Rule Name': rule_name,
+                        'Rule ID': rule_id,
+                        'State': state,
+                        'Compliance Status': compliance_status,
+                        'Compliant Resources': compliant_count,
+                        'Non-Compliant Resources': non_compliant_count,
+                        'Owner': owner,
+                        'Source Identifier': source_identifier,
+                        'Description': description[:200] + '...' if len(description) > 200 else description,
+                        'Rule ARN': rule_arn
+                    })
+
+        except Exception as e:
+            utils.log_error(f"Error collecting Config rules in region {region}", e)
+
+    utils.log_success(f"Total Config rules collected: {len(all_rules)}")
+    return all_rules
+
+
+@utils.aws_error_handler("Collecting conformance packs", default_return=[])
+def collect_conformance_packs(regions: List[str]) -> List[Dict[str, Any]]:
+    """
+    Collect AWS Config conformance pack information.
+
+    Args:
+        regions: List of AWS regions to scan
+
+    Returns:
+        list: List of dictionaries with conformance pack information
+    """
+    print("\n=== COLLECTING CONFORMANCE PACKS ===")
+    all_packs = []
+
+    for region in regions:
+        if not utils.validate_aws_region(region):
+            continue
+
+        print(f"\nProcessing region: {region}")
+
+        try:
+            config_client = utils.get_boto3_client('config', region_name=region)
+
+            # Describe conformance packs
+            packs_paginator = config_client.get_paginator('describe_conformance_packs')
+
+            for packs_page in packs_paginator.paginate():
+                packs = packs_page.get('ConformancePackDetails', [])
+
+                for pack in packs:
+                    pack_name = pack.get('ConformancePackName', '')
+                    pack_arn = pack.get('ConformancePackArn', '')
+                    pack_id = pack.get('ConformancePackId', '')
+
+                    # Created by
+                    created_by = pack.get('CreatedBy', 'N/A')
+
+                    # Delivery S3 bucket
+                    delivery_s3_bucket = pack.get('DeliveryS3Bucket', 'N/A')
+
+                    # Get compliance status
+                    compliance_status = 'UNKNOWN'
+                    try:
+                        compliance_response = config_client.describe_conformance_pack_compliance(
+                            ConformancePackName=pack_name
+                        )
+                        rules_compliance = compliance_response.get('ConformancePackRuleComplianceList', [])
+
+                        compliant = sum(1 for r in rules_compliance if r.get('ComplianceType') == 'COMPLIANT')
+                        non_compliant = sum(1 for r in rules_compliance if r.get('ComplianceType') == 'NON_COMPLIANT')
+
+                        if non_compliant > 0:
+                            compliance_status = f"{compliant} compliant, {non_compliant} non-compliant"
+                        elif compliant > 0:
+                            compliance_status = f"{compliant} compliant"
+                        else:
+                            compliance_status = 'No rules evaluated'
+
+                    except Exception:
+                        pass
+
+                    all_packs.append({
+                        'Region': region,
+                        'Pack Name': pack_name,
+                        'Pack ID': pack_id,
+                        'Compliance Status': compliance_status,
+                        'Created By': created_by,
+                        'Delivery S3 Bucket': delivery_s3_bucket,
+                        'Pack ARN': pack_arn
+                    })
+
+        except Exception as e:
+            utils.log_error(f"Error collecting conformance packs in region {region}", e)
+
+    utils.log_success(f"Total conformance packs collected: {len(all_packs)}")
+    return all_packs
+
+
+def export_config_data(account_id: str, account_name: str):
+    """
+    Export AWS Config information to an Excel file.
+
+    Args:
+        account_id: The AWS account ID
+        account_name: The AWS account name
+    """
+    # Ask for region selection
+    print("\n" + "=" * 60)
+    print("AWS Region Selection:")
+    print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1")
+    region_input = input("Would you like all AWS regions (type \"all\") or a specific region (ex. \"us-east-1\")? ").strip().lower()
+
+    # Get all available AWS regions
+    all_available_regions = get_aws_regions()
+
+    # Determine regions to scan
+    if region_input == "all":
+        regions = all_available_regions
+        region_text = "all AWS regions"
+        region_suffix = ""
+    else:
+        # Validate the provided region
+        if utils.validate_aws_region(region_input):
+            regions = [region_input]
+            region_text = f"AWS region {region_input}"
+            region_suffix = f"-{region_input}"
+        else:
+            utils.log_warning(f"'{region_input}' is not a valid AWS region. Using all AWS regions.")
+            regions = all_available_regions
+            region_text = "all AWS regions"
+            region_suffix = ""
+
+    print(f"\nStarting AWS Config export process for {region_text}...")
+    print("This may take some time depending on the number of regions and resources...")
+
+    utils.log_info(f"Processing {len(regions)} AWS regions: {', '.join(regions)}")
+
+    # Import pandas for DataFrame handling
+    import pandas as pd
+
+    # Dictionary to hold all DataFrames for export
+    data_frames = {}
+
+    # STEP 1: Collect configuration recorders
+    recorders = collect_configuration_recorders(regions)
+    if recorders:
+        data_frames['Configuration Recorders'] = pd.DataFrame(recorders)
+
+    # STEP 2: Collect delivery channels
+    channels = collect_delivery_channels(regions)
+    if channels:
+        data_frames['Delivery Channels'] = pd.DataFrame(channels)
+
+    # STEP 3: Collect Config rules
+    rules = collect_config_rules(regions)
+    if rules:
+        data_frames['Config Rules'] = pd.DataFrame(rules)
+
+    # STEP 4: Collect conformance packs
+    packs = collect_conformance_packs(regions)
+    if packs:
+        data_frames['Conformance Packs'] = pd.DataFrame(packs)
+
+    # Check if we have any data
+    if not data_frames:
+        utils.log_warning("No AWS Config data was collected. Nothing to export.")
+        print("\nNo AWS Config resources found in the selected region(s).")
+        return
+
+    # STEP 5: Prepare all DataFrames for export
+    for sheet_name in data_frames:
+        data_frames[sheet_name] = utils.prepare_dataframe_for_export(data_frames[sheet_name])
+
+    # STEP 6: Create filename and export
+    current_date = datetime.datetime.now().strftime("%m.%d.%Y")
+    final_excel_file = utils.create_export_filename(
+        account_name,
+        'config',
+        region_suffix,
+        current_date
+    )
+
+    # Save using utils module for consistent formatting
+    try:
+        output_path = utils.save_multiple_dataframes_to_excel(data_frames, final_excel_file)
+
+        if output_path:
+            utils.log_success("AWS Config data exported successfully!")
+            utils.log_info(f"File location: {output_path}")
+            utils.log_info(f"Export contains data from {len(regions)} AWS region(s)")
+
+            # Summary of exported data
+            for sheet_name, df in data_frames.items():
+                utils.log_info(f"  - {sheet_name}: {len(df)} records")
+                print(f"  - {sheet_name}: {len(df)} records")
+        else:
+            utils.log_error("Error creating Excel file. Please check the logs.")
+
+    except Exception as e:
+        utils.log_error("Error creating Excel file", e)
+
+
+def main():
+    """Main function to execute the script."""
+    try:
+        # Print title and get account information
+        account_id, account_name = print_title()
+
+        # Check and install dependencies
+        if not utils.ensure_dependencies('pandas', 'openpyxl'):
+            sys.exit(1)
+
+        # Check if account name is unknown
+        if account_name == "unknown":
+            proceed = input("Unable to determine account name. Proceed anyway? (y/n): ").lower()
+            if proceed != 'y':
+                print("Exiting script...")
+                sys.exit(0)
+
+        # Export AWS Config data
+        export_config_data(account_id, account_name)
+
+        print("\nAWS Config export script execution completed.")
+
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+        utils.log_info("Script cancelled by user")
+        sys.exit(1)
+    except Exception as e:
+        utils.log_error("An unexpected error occurred", e)
+        sys.exit(1)
+    finally:
+        utils.log_script_end("config-export.py", SCRIPT_START_TIME)
+
+
+if __name__ == "__main__":
+    main()
