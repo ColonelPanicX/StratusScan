@@ -781,6 +781,36 @@ def get_menu_structure():
             }
         },
         "13": {
+            "name": "Application Services",
+            "submenu": {
+                "1": {
+                    "name": "Step Functions",
+                    "file": scripts_dir / "stepfunctions-export.py",
+                    "description": "Export Step Functions state machines, executions, and activities"
+                },
+                "2": {
+                    "name": "App Runner",
+                    "file": scripts_dir / "apprunner-export.py",
+                    "description": "Export App Runner services, auto scaling configs, VPC connectors, and custom domains"
+                },
+                "3": {
+                    "name": "Elastic Beanstalk",
+                    "file": scripts_dir / "elasticbeanstalk-export.py",
+                    "description": "Export Elastic Beanstalk applications, environments, versions, and config templates"
+                },
+                "4": {
+                    "name": "AppSync",
+                    "file": scripts_dir / "appsync-export.py",
+                    "description": "Export AppSync GraphQL APIs, data sources, resolvers, and API keys"
+                },
+                "5": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "14": {
             "name": "Output Management",
             "submenu": {
                 "1": {
