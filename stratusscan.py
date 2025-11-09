@@ -659,6 +659,16 @@ def get_menu_structure():
                     "description": "Export AWS Compute Optimizer recommendations for EC2, RDS, Lambda, and ECS"
                 },
                 "4": {
+                    "name": "Savings Plans",
+                    "file": scripts_dir / "savings-plans-export.py",
+                    "description": "Export Savings Plans (Compute, EC2, SageMaker) with commitment details and savings estimates"
+                },
+                "5": {
+                    "name": "AWS Budgets",
+                    "file": scripts_dir / "budgets-export.py",
+                    "description": "Export AWS Budgets with alerts, thresholds, actual vs forecasted spend tracking"
+                },
+                "6": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
