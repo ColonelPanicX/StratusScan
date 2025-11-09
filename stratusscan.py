@@ -676,6 +676,51 @@ def get_menu_structure():
             }
         },
         "9": {
+            "name": "Integration & Messaging",
+            "submenu": {
+                "1": {
+                    "name": "API Gateway",
+                    "file": scripts_dir / "api-gateway-export.py",
+                    "description": "Export API Gateway REST APIs, HTTP APIs, stages, and custom domains"
+                },
+                "2": {
+                    "name": "EventBridge",
+                    "file": scripts_dir / "eventbridge-export.py",
+                    "description": "Export EventBridge event buses, rules, targets, and archives"
+                },
+                "3": {
+                    "name": "SQS/SNS",
+                    "file": scripts_dir / "sqs-sns-export.py",
+                    "description": "Export SQS queues and SNS topics with subscriptions and configurations"
+                },
+                "4": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "10": {
+            "name": "Monitoring & Operations",
+            "submenu": {
+                "1": {
+                    "name": "CloudWatch",
+                    "file": scripts_dir / "cloudwatch-export.py",
+                    "description": "Export CloudWatch alarms, log groups, and metric filters"
+                },
+                "2": {
+                    "name": "Systems Manager Fleet",
+                    "file": scripts_dir / "ssm-fleet-export.py",
+                    "description": "Export SSM managed instances, patch compliance, and parameters"
+                },
+                "3": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "11": {
             "name": "Output Management",
             "submenu": {
                 "1": {
