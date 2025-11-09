@@ -357,11 +357,16 @@ def get_menu_structure():
                     "description": "Export ECS cluster and service information"
                 },
                 "5": {
+                    "name": "Auto Scaling Groups",
+                    "file": scripts_dir / "autoscaling-export.py",
+                    "description": "Export Auto Scaling Group configurations, instances, and scaling policies"
+                },
+                "6": {
                     "name": "All Compute Resources",
                     "file": scripts_dir / "compute-resources.py",
                     "description": "Export all compute resources (EC2, RDS, EKS, ECS) in one comprehensive report"
                 },
-                "6": {
+                "7": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
