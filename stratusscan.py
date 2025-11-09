@@ -721,6 +721,36 @@ def get_menu_structure():
             }
         },
         "11": {
+            "name": "Database Resources",
+            "submenu": {
+                "1": {
+                    "name": "DynamoDB",
+                    "file": scripts_dir / "dynamodb-export.py",
+                    "description": "Export DynamoDB tables, GSIs, backups, and configuration details"
+                },
+                "2": {
+                    "name": "ElastiCache",
+                    "file": scripts_dir / "elasticache-export.py",
+                    "description": "Export ElastiCache (Redis/Memcached) clusters, replication groups, and subnet groups"
+                },
+                "3": {
+                    "name": "DocumentDB",
+                    "file": scripts_dir / "documentdb-export.py",
+                    "description": "Export DocumentDB (MongoDB-compatible) clusters, instances, and snapshots"
+                },
+                "4": {
+                    "name": "Neptune",
+                    "file": scripts_dir / "neptune-export.py",
+                    "description": "Export Neptune (Graph Database) clusters, instances, snapshots, and endpoints"
+                },
+                "5": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "12": {
             "name": "Output Management",
             "submenu": {
                 "1": {
