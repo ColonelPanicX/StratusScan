@@ -2,8 +2,8 @@
 
 Complete API reference for the StratusScan-CLI utility module (`utils.py`).
 
-**Version**: 2.1.4
-**Last Updated**: 2025-11-07
+**Version**: 2.2.0
+**Last Updated**: 2025-11-10
 
 ---
 
@@ -814,6 +814,7 @@ with utils.handle_aws_operation("Multi-step process", suppress_errors=False):
 
 ## Version History
 
+- **v2.2.0** (2025-11-10): Added 24 new export scripts across Advanced Security, AI/ML, and Developer Tools
 - **v2.1.4** (2025-11-07): Added progress checkpointing, dry-run validation, cost estimation
 - **v2.1.0** (2025-10-30): Added DataFrame sanitization and preparation utilities
 - **v2.0.0** (2025-10-30): Added standardized error handling decorators
@@ -831,5 +832,5 @@ with utils.handle_aws_operation("Multi-step process", suppress_errors=False):
 
 ---
 
-*Last Updated: 2025-11-07*
-*StratusScan-CLI API Reference v2.1.4*
+*Last Updated: 2025-11-10*
+*StratusScan-CLI API Reference v2.2.0*
