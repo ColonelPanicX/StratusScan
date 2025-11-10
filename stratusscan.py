@@ -811,6 +811,36 @@ def get_menu_structure():
             }
         },
         "14": {
+            "name": "Advanced Security & Identity",
+            "submenu": {
+                "1": {
+                    "name": "Macie",
+                    "file": scripts_dir / "macie-export.py",
+                    "description": "Export Macie data security service: classification jobs, findings, and sensitive data discovery"
+                },
+                "2": {
+                    "name": "Cognito",
+                    "file": scripts_dir / "cognito-export.py",
+                    "description": "Export Cognito user pools, identity pools, clients, providers, and groups"
+                },
+                "3": {
+                    "name": "ACM Private CA",
+                    "file": scripts_dir / "acm-privateca-export.py",
+                    "description": "Export ACM Private Certificate Authorities, certificates, templates, and permissions"
+                },
+                "4": {
+                    "name": "IAM Identity Providers",
+                    "file": scripts_dir / "iam-identity-providers-export.py",
+                    "description": "Export IAM SAML and OIDC identity providers with role trust relationships"
+                },
+                "5": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "15": {
             "name": "Output Management",
             "submenu": {
                 "1": {
