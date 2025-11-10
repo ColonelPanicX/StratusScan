@@ -318,7 +318,7 @@ def discover_services_by_resource_enumeration():
         }
     }
 
-    regions = utils.AWS_REGIONS
+    regions = utils.get_default_regions()
     total_checks = len(service_checks) * len(regions)
     current_check = 0
 
