@@ -871,6 +871,36 @@ def get_menu_structure():
             }
         },
         "16": {
+            "name": "Developer Tools & CI/CD",
+            "submenu": {
+                "1": {
+                    "name": "CodeBuild",
+                    "file": scripts_dir / "codebuild-export.py",
+                    "description": "Export CodeBuild projects, builds, and report groups"
+                },
+                "2": {
+                    "name": "CodePipeline",
+                    "file": scripts_dir / "codepipeline-export.py",
+                    "description": "Export CodePipeline pipelines, executions, and webhooks"
+                },
+                "3": {
+                    "name": "CodeCommit",
+                    "file": scripts_dir / "codecommit-export.py",
+                    "description": "Export CodeCommit repositories, branches, and pull requests"
+                },
+                "4": {
+                    "name": "CodeDeploy",
+                    "file": scripts_dir / "codedeploy-export.py",
+                    "description": "Export CodeDeploy applications, deployment groups, and deployments"
+                },
+                "5": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "17": {
             "name": "Output Management",
             "submenu": {
                 "1": {
