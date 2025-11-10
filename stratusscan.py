@@ -841,6 +841,36 @@ def get_menu_structure():
             }
         },
         "15": {
+            "name": "AI & Machine Learning",
+            "submenu": {
+                "1": {
+                    "name": "SageMaker",
+                    "file": scripts_dir / "sagemaker-export.py",
+                    "description": "Export SageMaker notebooks, training jobs, models, endpoints, and processing jobs"
+                },
+                "2": {
+                    "name": "Bedrock",
+                    "file": scripts_dir / "bedrock-export.py",
+                    "description": "Export Bedrock foundation models, custom models, guardrails, knowledge bases, and agents"
+                },
+                "3": {
+                    "name": "Comprehend",
+                    "file": scripts_dir / "comprehend-export.py",
+                    "description": "Export Comprehend entity recognizers, classifiers, endpoints, and NLP jobs"
+                },
+                "4": {
+                    "name": "Rekognition",
+                    "file": scripts_dir / "rekognition-export.py",
+                    "description": "Export Rekognition custom models, face collections, stream processors, and projects"
+                },
+                "5": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "16": {
             "name": "Output Management",
             "submenu": {
                 "1": {
