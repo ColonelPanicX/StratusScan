@@ -976,6 +976,26 @@ def get_menu_structure():
             }
         },
         "17": {
+            "name": "Management & Governance",
+            "submenu": {
+                "1": {
+                    "name": "CloudFormation",
+                    "file": scripts_dir / "cloudformation-export.py",
+                    "description": "Export CloudFormation stacks, StackSets, resources, and drift detection status"
+                },
+                "2": {
+                    "name": "Service Catalog",
+                    "file": scripts_dir / "service-catalog-export.py",
+                    "description": "Export Service Catalog portfolios, products, provisioned products, and access controls"
+                },
+                "3": {
+                    "name": "Return to Main Menu",
+                    "file": None,
+                    "description": "Return to the main menu"
+                }
+            }
+        },
+        "18": {
             "name": "Output Management",
             "submenu": {
                 "1": {
