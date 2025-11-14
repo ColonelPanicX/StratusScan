@@ -427,11 +427,21 @@ def get_menu_structure():
                     "description": "Export AWS Backup vaults, backup plans, and backup selections"
                 },
                 "7": {
+                    "name": "S3 Access Points",
+                    "file": scripts_dir / "s3-accesspoints-export.py",
+                    "description": "Export S3 Access Points (standard, multi-region, Object Lambda) with VPC configs and policies"
+                },
+                "8": {
+                    "name": "DataSync",
+                    "file": scripts_dir / "datasync-export.py",
+                    "description": "Export DataSync tasks, locations (S3/EFS/FSx/NFS/SMB), agents, and execution history"
+                },
+                "9": {
                     "name": "All Storage Resources",
                     "file": scripts_dir / "storage-resources.py",
                     "description": "Export all storage resources (EBS, S3) in one comprehensive report"
                 },
-                "8": {
+                "10": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
