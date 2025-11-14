@@ -532,11 +532,16 @@ def get_menu_structure():
                     "description": "Export Network Firewall configurations, policies, rule groups, and logging settings"
                 },
                 "13": {
+                    "name": "Network Manager",
+                    "file": scripts_dir / "network-manager-export.py",
+                    "description": "Export Network Manager global networks, sites, links, devices, and SD-WAN topology"
+                },
+                "14": {
                     "name": "All Network Resources",
                     "file": scripts_dir / "network-resources.py",
                     "description": "Export all network resources (VPC, ELB, NACLs, Security Groups, Route Tables) in one comprehensive report"
                 },
-                "14": {
+                "15": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
@@ -784,6 +789,11 @@ def get_menu_structure():
                     "description": "Export Service Discovery namespaces, services, instances, and health check configurations"
                 },
                 "5": {
+                    "name": "SES & Pinpoint",
+                    "file": scripts_dir / "ses-pinpoint-export.py",
+                    "description": "Export SES email identities, configuration sets, Pinpoint applications, campaigns, and segments"
+                },
+                "6": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
