@@ -451,6 +451,44 @@ def get_resource_preference(resource_type: str, preference: str, default: Any = 
     
     return default
 
+def is_service_available_in_partition(service: str, partition: str = 'aws') -> bool:
+    """
+    Check if an AWS service is available in the specified partition.
+
+    Args:
+        service: AWS service name (e.g., 'ec2', 'iam', 's3')
+        partition: AWS partition ('aws' or 'aws-us-gov')
+
+    Returns:
+        bool: True if service is available in partition, False otherwise
+    """
+    # Services NOT available in GovCloud (partial list)
+    govcloud_unavailable = {
+        'trustedadvisor',  # Not available in GovCloud
+        'appstream',       # Not available in GovCloud
+        'chime',          # Not available in GovCloud
+        'sumerian',       # Not available in GovCloud
+        'gamelift',       # Not available in GovCloud
+        'robomaker',      # Not available in GovCloud
+    }
+
+    # Services with limited availability in GovCloud
+    govcloud_limited = {
+        'marketplace',     # Limited functionality
+        'organizations',   # Different features
+    }
+
+    if partition == 'aws-us-gov':
+        if service.lower() in govcloud_unavailable:
+            log_debug(f"Service {service} is not available in AWS GovCloud")
+            return False
+        if service.lower() in govcloud_limited:
+            log_debug(f"Service {service} has limited functionality in AWS GovCloud")
+
+    # All services available in commercial AWS
+    return True
+
+
 def is_service_enabled(service_name: str) -> bool:
     """
     Check if a service is enabled in the current AWS environment.
@@ -485,14 +523,51 @@ def get_service_disability_reason(service_name: str) -> Optional[str]:
     
     return None
 
-def get_default_regions() -> List[str]:
+def get_partition_regions(partition: str = 'aws') -> List[str]:
+    """
+    Get available regions for a specific AWS partition.
+
+    Args:
+        partition: AWS partition ('aws' or 'aws-us-gov')
+
+    Returns:
+        list: List of region names for the partition
+    """
+    if partition == 'aws-us-gov':
+        return ['us-gov-west-1', 'us-gov-east-1']
+    elif partition == 'aws':
+        # Standard commercial regions
+        return DEFAULT_REGIONS
+    else:
+        log_warning(f"Unknown partition: {partition}, returning commercial regions")
+        return DEFAULT_REGIONS
+
+
+def get_default_regions(partition: Optional[str] = None) -> List[str]:
     """
     Get the default AWS regions from configuration.
+
+    Args:
+        partition: Optional partition to filter regions ('aws' or 'aws-us-gov')
+                  If not provided, uses regions from config.json or auto-detects
 
     Returns:
         list: List of default AWS region names
     """
-    return CONFIG_DATA.get('default_regions', DEFAULT_REGIONS)
+    # If partition specified, return regions for that partition
+    if partition:
+        return get_partition_regions(partition)
+
+    # Get regions from config
+    config_regions = CONFIG_DATA.get('default_regions', DEFAULT_REGIONS)
+
+    # Auto-detect partition from first region if possible
+    if config_regions:
+        detected_partition = detect_partition(config_regions[0])
+        # Filter regions to match the detected partition
+        return [r for r in config_regions if detect_partition(r) == detected_partition]
+
+    return config_regions
 
 def get_organization_name() -> str:
     """
@@ -577,6 +652,22 @@ def log_aws_info(message: str) -> None:
     """
     current_logger = get_logger()
     current_logger.info(f"AWS: {message}")
+
+def log_partition_info(partition: str, regions: List[str]) -> None:
+    """
+    Log AWS partition information for user awareness.
+
+    Args:
+        partition: AWS partition ('aws' or 'aws-us-gov')
+        regions: List of regions being used
+    """
+    current_logger = get_logger()
+    partition_name = "AWS GovCloud" if partition == 'aws-us-gov' else "AWS Commercial"
+    current_logger.info(f"AWS PARTITION: {partition_name} ({partition})")
+    current_logger.info(f"REGIONS: {', '.join(regions)}")
+
+    if partition == 'aws-us-gov':
+        current_logger.info("NOTE: GovCloud has different service availability - some features may not be available")
 
 def log_script_start(script_name: str, description: str = "") -> None:
     """
@@ -1509,64 +1600,76 @@ def get_account_info() -> Tuple[str, str]:
 
 
 def prompt_region_selection(
-    prompt_message: str = "Select AWS region(s):",
+    service_name: Optional[str] = None,
+    prompt_message: Optional[str] = None,
     allow_all: bool = True,
-    default_regions: Optional[List[str]] = None
+    default_regions: Optional[List[str]] = None,
+    default_to_all: bool = True
 ) -> List[str]:
     """
-    Interactive region selection with validation.
+    Interactive region selection with validation and partition awareness.
 
     This function provides a user-friendly interface for selecting AWS regions,
     with support for selecting all regions or specific regions. It validates
-    user input against known AWS region patterns.
+    user input against known AWS region patterns and supports both AWS Commercial
+    and GovCloud partitions.
 
     Args:
-        prompt_message: Custom message to display to user
+        service_name: Name of service for display (e.g., "EC2", "RDS")
+        prompt_message: Custom message to display to user (optional)
         allow_all: Whether to allow 'all' as a valid option
         default_regions: List of regions to use when 'all' is selected.
                         If None, uses get_default_regions() from config
+        default_to_all: If True, auto-select all regions without prompting
 
     Returns:
         list: List of AWS region names to scan
 
     Examples:
-        >>> # Basic usage - allow all regions
-        >>> regions = utils.prompt_region_selection()
-        Select AWS region(s):
-        Available AWS regions: us-east-1, us-west-2, us-west-1, eu-west-1
-        Enter region or 'all': all
-        >>> print(regions)
-        ['us-east-1', 'us-west-2', 'us-west-1', 'eu-west-1']
-
-        >>> # Specific region only
+        >>> # Auto-select all regions (no prompt)
         >>> regions = utils.prompt_region_selection(
-        ...     prompt_message="Select a region for RDS export:",
-        ...     allow_all=False
+        ...     service_name="EC2",
+        ...     default_to_all=True
         ... )
 
-        >>> # Custom default regions
+        >>> # Prompt user for region selection
         >>> regions = utils.prompt_region_selection(
-        ...     allow_all=True,
+        ...     service_name="RDS",
+        ...     default_to_all=False
+        ... )
+
+        >>> # Custom regions
+        >>> regions = utils.prompt_region_selection(
+        ...     service_name="VPC",
         ...     default_regions=['us-east-1', 'us-west-2']
         ... )
-
-        >>> # Typical usage pattern in scripts
-        >>> def main():
-        ...     regions = utils.prompt_region_selection(
-        ...         prompt_message="Select region(s) for EC2 scan:",
-        ...         allow_all=True
-        ...     )
-        ...     for region in regions:
-        ...         scan_ec2_instances(region)
 
     Note:
         - Invalid region input will trigger a warning and use defaults
         - Uses validate_aws_region() for input validation
+        - Partition-aware: detects AWS Commercial vs GovCloud
         - Uses get_default_regions() if default_regions not provided
     """
-    # Display available regions
+    # Auto-detect partition
+    fallback_regions = default_regions if default_regions else get_default_regions()
+    partition = detect_partition(fallback_regions[0] if fallback_regions else None)
+
+    # Auto-select all regions if requested
+    if default_to_all:
+        log_info(f"{service_name or 'Service'} export will scan all configured regions")
+        log_partition_info(partition, fallback_regions)
+        return fallback_regions
+
+    # Build prompt message
+    if not prompt_message:
+        prompt_message = f"Select AWS region(s) for {service_name}:" if service_name else "Select AWS region(s):"
+
+    # Display available regions based on partition
     print(f"\n{prompt_message}")
-    print("Available AWS regions: us-east-1, us-west-2, us-west-1, eu-west-1, ap-southeast-1")
+    if partition == 'aws-us-gov':
+        print("Available GovCloud regions: us-gov-west-1, us-gov-east-1")
+    else:
+        print("Available AWS regions: us-east-1, us-west-2, us-west-1, eu-west-1, ap-southeast-1")
 
     # Prompt for input
     if allow_all:
@@ -1576,19 +1679,20 @@ def prompt_region_selection(
 
     # Handle 'all' option
     if allow_all and region_input == 'all':
-        selected_regions = default_regions if default_regions else get_default_regions()
+        selected_regions = fallback_regions
         log_info(f"Selected all regions: {len(selected_regions)} regions")
-        log_debug(f"Regions: {', '.join(selected_regions)}")
+        log_partition_info(partition, selected_regions)
         return selected_regions
 
     # Validate and return single region
     if validate_aws_region(region_input):
         log_info(f"Selected region: {region_input}")
+        log_partition_info(partition, [region_input])
         return [region_input]
     else:
         log_warning(f"Invalid region: {region_input}")
-        fallback_regions = default_regions if default_regions else get_default_regions()
         log_info(f"Using default regions instead: {', '.join(fallback_regions)}")
+        log_partition_info(partition, fallback_regions)
         return fallback_regions
 
 
