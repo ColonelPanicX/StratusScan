@@ -457,11 +457,16 @@ def get_menu_structure():
                     "description": "Export Storage Gateway gateways (File/Volume/Tape), file shares, volumes, tapes, and local disks"
                 },
                 "11": {
+                    "name": "Glacier Vaults",
+                    "file": scripts_dir / "glacier-export.py",
+                    "description": "Export Glacier vaults, access policies, lock policies, and notifications (separate from S3 Glacier)"
+                },
+                "12": {
                     "name": "All Storage Resources",
                     "file": scripts_dir / "storage-resources.py",
                     "description": "Export all storage resources (EBS, S3) in one comprehensive report"
                 },
-                "12": {
+                "13": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
@@ -909,6 +914,11 @@ def get_menu_structure():
                     "description": "Export AppSync GraphQL APIs, data sources, resolvers, and API keys"
                 },
                 "5": {
+                    "name": "AWS Connect",
+                    "file": scripts_dir / "connect-export.py",
+                    "description": "Export Connect contact center instances, queues, contact flows, phone numbers, and users"
+                },
+                "6": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
