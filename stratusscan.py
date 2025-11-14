@@ -729,6 +729,16 @@ def get_menu_structure():
                     "description": "Export AWS Budgets with alerts, thresholds, actual vs forecasted spend tracking"
                 },
                 "6": {
+                    "name": "Reserved Instances",
+                    "file": scripts_dir / "reserved-instances-export.py",
+                    "description": "Export Reserved Instances across EC2, RDS, ElastiCache, OpenSearch, Redshift, MemoryDB with utilization and expiration tracking"
+                },
+                "7": {
+                    "name": "Cost Categories",
+                    "file": scripts_dir / "cost-categories-export.py",
+                    "description": "Export Cost Categories definitions, rules, inherited values, and split charge configurations"
+                },
+                "8": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
