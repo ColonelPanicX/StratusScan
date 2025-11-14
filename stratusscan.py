@@ -437,11 +437,21 @@ def get_menu_structure():
                     "description": "Export DataSync tasks, locations (S3/EFS/FSx/NFS/SMB), agents, and execution history"
                 },
                 "9": {
+                    "name": "Transfer Family",
+                    "file": scripts_dir / "transfer-family-export.py",
+                    "description": "Export Transfer Family servers (SFTP/FTPS/FTP/AS2), users, connectors, workflows, and certificates"
+                },
+                "10": {
+                    "name": "Storage Gateway",
+                    "file": scripts_dir / "storagegateway-export.py",
+                    "description": "Export Storage Gateway gateways (File/Volume/Tape), file shares, volumes, tapes, and local disks"
+                },
+                "11": {
                     "name": "All Storage Resources",
                     "file": scripts_dir / "storage-resources.py",
                     "description": "Export all storage resources (EBS, S3) in one comprehensive report"
                 },
-                "10": {
+                "12": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
