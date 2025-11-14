@@ -779,6 +779,11 @@ def get_menu_structure():
                     "description": "Export SQS queues and SNS topics with subscriptions and configurations"
                 },
                 "4": {
+                    "name": "Service Discovery (Cloud Map)",
+                    "file": scripts_dir / "servicediscovery-export.py",
+                    "description": "Export Service Discovery namespaces, services, instances, and health check configurations"
+                },
+                "5": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
@@ -799,6 +804,11 @@ def get_menu_structure():
                     "description": "Export SSM managed instances, patch compliance, and parameters"
                 },
                 "3": {
+                    "name": "X-Ray",
+                    "file": scripts_dir / "xray-export.py",
+                    "description": "Export X-Ray distributed tracing: sampling rules, groups, insights, and encryption config"
+                },
+                "4": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
