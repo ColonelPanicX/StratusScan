@@ -472,21 +472,41 @@ def get_menu_structure():
                     "description": "Export CloudFront distribution configurations, origins, and cache behaviors"
                 },
                 "7": {
+                    "name": "Route 53",
+                    "file": scripts_dir / "route53-export.py",
+                    "description": "Export Route 53 hosted zones, DNS records, health checks, and Resolver configurations"
+                },
+                "8": {
+                    "name": "VPN",
+                    "file": scripts_dir / "vpn-export.py",
+                    "description": "Export Site-to-Site VPN connections, Client VPN endpoints, and gateway configurations"
+                },
+                "9": {
+                    "name": "Direct Connect",
+                    "file": scripts_dir / "directconnect-export.py",
+                    "description": "Export Direct Connect connections, virtual interfaces, LAGs, and gateways (premium service)"
+                },
+                "10": {
+                    "name": "Global Accelerator",
+                    "file": scripts_dir / "globalaccelerator-export.py",
+                    "description": "Export Global Accelerator configurations, listeners, endpoint groups, and endpoints (premium service)"
+                },
+                "11": {
                     "name": "Transit Gateway",
                     "file": scripts_dir / "transit-gateway-export.py",
                     "description": "Export Transit Gateway configurations, attachments, route tables, and routes"
                 },
-                "8": {
+                "12": {
                     "name": "AWS Network Firewall",
                     "file": scripts_dir / "network-firewall-export.py",
                     "description": "Export Network Firewall configurations, policies, rule groups, and logging settings"
                 },
-                "9": {
+                "13": {
                     "name": "All Network Resources",
                     "file": scripts_dir / "network-resources.py",
                     "description": "Export all network resources (VPC, ELB, NACLs, Security Groups, Route Tables) in one comprehensive report"
                 },
-                "10": {
+                "14": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
@@ -542,6 +562,26 @@ def get_menu_structure():
                     "description": "Export Access Analyzer findings, analyzers, archive rules, and external access detection"
                 },
                 "10": {
+                    "name": "Detective",
+                    "file": scripts_dir / "detective-export.py",
+                    "description": "Export Detective behavior graphs, member accounts, invitations, and security investigation capabilities"
+                },
+                "11": {
+                    "name": "Shield Advanced",
+                    "file": scripts_dir / "shield-export.py",
+                    "description": "Export Shield Advanced DDoS protection: subscription, protections, attacks, DRT access (premium service ~$3k/month)"
+                },
+                "12": {
+                    "name": "IAM Roles Anywhere",
+                    "file": scripts_dir / "iam-rolesanywhere-export.py",
+                    "description": "Export IAM Roles Anywhere trust anchors, profiles, CRLs, and workload identity federation for on-premises X.509 certificates"
+                },
+                "13": {
+                    "name": "Verified Access",
+                    "file": scripts_dir / "verifiedaccess-export.py",
+                    "description": "Export Verified Access instances, trust providers, groups, endpoints, and zero-trust network access configurations"
+                },
+                "14": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
