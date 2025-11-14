@@ -949,6 +949,11 @@ def get_menu_structure():
                     "description": "Export IAM SAML and OIDC identity providers with role trust relationships"
                 },
                 "5": {
+                    "name": "Verified Permissions",
+                    "file": scripts_dir / "verifiedpermissions-export.py",
+                    "description": "Export Verified Permissions Cedar policies, policy stores, templates, and identity sources"
+                },
+                "6": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
@@ -1039,6 +1044,11 @@ def get_menu_structure():
                     "description": "Export License Manager configurations, usage tracking, grants, and license compliance"
                 },
                 "5": {
+                    "name": "AWS Marketplace",
+                    "file": scripts_dir / "marketplace-export.py",
+                    "description": "Export AWS Marketplace configuration and Private Marketplace settings"
+                },
+                "6": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
