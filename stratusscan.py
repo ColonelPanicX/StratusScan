@@ -382,11 +382,21 @@ def get_menu_structure():
                     "description": "Export Image Builder pipelines, recipes, components, and infrastructure configurations"
                 },
                 "10": {
+                    "name": "EC2 Capacity Reservations",
+                    "file": scripts_dir / "ec2-capacity-reservations-export.py",
+                    "description": "Export EC2 Capacity Reservations (ODCRs), capacity fleets, blocks, and utilization tracking"
+                },
+                "11": {
+                    "name": "EC2 Dedicated Hosts",
+                    "file": scripts_dir / "ec2-dedicated-hosts-export.py",
+                    "description": "Export EC2 Dedicated Hosts, host reservations, instance placements, and BYOL license tracking"
+                },
+                "12": {
                     "name": "All Compute Resources",
                     "file": scripts_dir / "compute-resources.py",
                     "description": "Export all compute resources (EC2, RDS, EKS, ECS) in one comprehensive report"
                 },
-                "11": {
+                "13": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
