@@ -989,6 +989,16 @@ def get_menu_structure():
                     "description": "Export Service Catalog portfolios, products, provisioned products, and access controls"
                 },
                 "3": {
+                    "name": "AWS Health",
+                    "file": scripts_dir / "health-export.py",
+                    "description": "Export AWS Health events, Personal Health Dashboard, affected resources, and organizational events"
+                },
+                "4": {
+                    "name": "License Manager",
+                    "file": scripts_dir / "license-manager-export.py",
+                    "description": "Export License Manager configurations, usage tracking, grants, and license compliance"
+                },
+                "5": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
