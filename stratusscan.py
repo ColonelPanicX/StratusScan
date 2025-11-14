@@ -739,6 +739,11 @@ def get_menu_structure():
                     "description": "Export Cost Categories definitions, rules, inherited values, and split charge configurations"
                 },
                 "8": {
+                    "name": "Cost Anomaly Detection",
+                    "file": scripts_dir / "cost-anomaly-detection-export.py",
+                    "description": "Export Cost Anomaly Detection monitors, subscriptions, anomalies, and root cause analysis"
+                },
+                "9": {
                     "name": "Return to Main Menu",
                     "file": None,
                     "description": "Return to the main menu"
