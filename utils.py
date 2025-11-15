@@ -5,21 +5,23 @@
 ===========================
 
 Title: StratusScan Utilities Module
-Version: v1.1.0
-Date: AUG-19-2025
+Version: v3.0.0
+Date: NOV-14-2025
 
 Description:
-Shared utility functions for StratusScan scripts optimized for AWS Commercial
-environment. This module provides common functionality such as
+Shared utility functions for StratusScan scripts with multi-partition support.
+Works seamlessly in both AWS Commercial and AWS GovCloud environments with
+automatic partition detection. This module provides common functionality such as
 path handling, file operations, standardized output formatting, account mapping,
-and region and partition handling.
+region and partition handling, and cross-partition resource management.
 
 Features:
-- Updated default regions to standard AWS regions (us-east-1, us-west-2)
-- Standard AWS region validation
-- Standard partition handling for aws
-- Full service availability including Trusted Advisor
-- Updated service availability checks for commercial AWS environment
+- Multi-partition support (AWS Commercial & GovCloud)
+- Automatic partition detection from credentials
+- Partition-aware region selection and ARN building
+- Service availability validation by partition
+- Full service availability including Trusted Advisor (Commercial)
+- Zero-configuration cross-environment compatibility
 """
 
 import os

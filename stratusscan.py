@@ -7,8 +7,8 @@
 ===========================
 
 Title: StratusScan - AWS Resource Exporter Main Menu
-Version: v2.2.0
-Date: NOV-10-2025
+Version: v3.0.0
+Date: NOV-14-2025
 
 Description:
 This script provides a centralized interface for executing various AWS resource
@@ -17,11 +17,13 @@ type to export (EC2 instances, VPC resources, etc.) and calls the appropriate sc
 to perform the selected operation.
 
 Features:
-- Updated for AWS Commercial environment
-- Trusted Advisor enabled and available
-- Default regions set to us-east-1 and us-west-2
-- All AWS services and regions available
-- Updated partition handling for standard aws
+- Multi-partition support (AWS Commercial & GovCloud)
+- Automatic partition detection from credentials
+- Zero-configuration cross-environment compatibility
+- 109 comprehensive export scripts covering 105+ AWS services
+- Trusted Advisor enabled (Commercial) with GovCloud service awareness
+- Partition-aware region selection and ARN building
+- All AWS services and regions available in respective partitions
 
 Deployment Structure:
 - The main menu script should be located in the root directory of the StratusScan package
@@ -77,10 +79,10 @@ def print_header():
     print("                         STRATUSSCAN                                ")
     print("                   AWS RESOURCE EXPORTER MENU                      ")
     print("====================================================================")
-    print("Version: v2.2.0                                Date: NOV-10-2025")
-    print("Environment: AWS Commercial")
+    print("Version: v3.0.0                                Date: NOV-14-2025")
+    print("Multi-Partition: Commercial & GovCloud Support")
     print("====================================================================")
-    
+
     # Get the current AWS account ID and map to account name
     try:
         # Create a boto3 STS client
@@ -88,21 +90,28 @@ def print_header():
         sts = boto3.client('sts')
         account_id = sts.get_caller_identity()["Account"]
         account_name = utils.get_account_name(account_id, default=account_id)
-        
-        # Validate AWS connection
+
+        # Detect partition and display environment
         try:
             caller_arn = sts.get_caller_identity()["Arn"]
-            # This tool is optimized for AWS Commercial environments
+            partition = utils.detect_partition()
+            if partition == 'aws-us-gov':
+                environment = "AWS GovCloud (US)"
+            elif partition == 'aws':
+                environment = "AWS Commercial"
+            else:
+                environment = f"AWS ({partition})"
+            print(f"Environment: {environment}")
         except Exception:
-            pass  # Continue if we can't validate the partition
-        
+            print("Environment: AWS Commercial (default)")
+
         print(f"Account ID: {account_id}")
         print(f"Account Name: {account_name}")
     except Exception as e:
         print(f"Error getting account information: {e}")
         account_id = "UNKNOWN"
         account_name = "UNKNOWN-ACCOUNT"
-    
+
     print("====================================================================")
     return account_id, account_name
 
@@ -314,7 +323,8 @@ def create_output_archive(account_name):
 def get_menu_structure():
     """
     Create a hierarchical menu structure with main categories and submenus.
-    Updated for AWS Commercial environment - includes all available services.
+    Updated for multi-partition support - includes all available services for
+    both AWS Commercial and GovCloud environments.
 
     Returns:
         dict: Dictionary with main menu options and their corresponding submenus
