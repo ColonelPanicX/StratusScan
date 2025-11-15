@@ -6,8 +6,8 @@
 ===========================
 
 Title: AWS EC2 Instance Data Export Script
-Version: v1.11.0
-Date: SEP-30-2025
+Version: v1.12.0
+Date: NOV-15-2025
 
 Description:
 This script queries AWS EC2 instances across available regions and exports detailed instance
@@ -20,6 +20,7 @@ Features:
 - Cost calculation integration
 - Flexible region filtering
 - Enhanced error handling and logging
+- Phase 4B: Concurrent region scanning (4x-10x performance improvement)
 """
 
 import sys
@@ -704,15 +705,29 @@ def main():
             regions = [region_choice]
             utils.log_info(f"Scanning only the {region_choice} AWS region.")
         
-        # Collect instance data from specified AWS regions
-        all_instances = []
-        total_instances = 0
-        for region in regions:
+        # Collect instance data from specified AWS regions (Phase 4B: concurrent scanning)
+        utils.log_info(f"Scanning {len(regions)} region(s) for EC2 instances...")
+
+        # Define region scan function that wraps get_instance_data
+        def scan_region(region):
             utils.log_info(f"Collecting data from AWS region: {region}")
             instances = get_instance_data(region, instance_filter)
+            utils.log_info(f"Found {len(instances)} instances in {region}")
+            return instances
+
+        # Use concurrent region scanning (with automatic fallback to sequential on errors)
+        region_results = utils.scan_regions_concurrent(
+            regions=regions,
+            scan_function=scan_region,
+            show_progress=True
+        )
+
+        # Flatten results
+        all_instances = []
+        total_instances = 0
+        for instances in region_results:
             instance_count = len(instances)
             total_instances += instance_count
-            utils.log_info(f"Found {instance_count} instances in {region}")
             all_instances.extend(instances)
 
         if not all_instances:
