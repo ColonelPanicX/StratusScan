@@ -19,16 +19,12 @@ Storage Type, Storage, Provisioned IOPS, Port, Endpoint, Master Username, VPC
 DB Certificate Expiry, Created Time, and Encryption information.
 """
 
-import os
 import sys
 import datetime
-import json
-import boto3
-import time
-import botocore.exceptions
 import csv
 import re
 from pathlib import Path
+from botocore.exceptions import ClientError
 
 # Add path to import utils module
 try:
@@ -68,9 +64,9 @@ def print_title():
     
     # Get the current AWS account ID using STS (Security Token Service)
     try:
-        sts_client = boto3.client('sts')
+        sts_client = utils.get_boto3_client('sts')
         account_id = sts_client.get_caller_identity()['Account']
-        
+
         # Validate AWS environment
         caller_arn = sts_client.get_caller_identity()['Arn']
         account_name = utils.get_account_name(account_id, default="UNKNOWN-ACCOUNT")
@@ -85,64 +81,7 @@ def print_title():
     print("====================================================================")
     return account_id, account_name
 
-def check_and_install_dependencies():
-    """
-    Check for required dependencies and prompt to install if missing.
-    This function ensures pandas and openpyxl are available for Excel export functionality.
-    """
-    required_packages = ['pandas', 'openpyxl']
-    missing_packages = []
-    
-    # Check for each required package by attempting to import
-    for package in required_packages:
-        try:
-            __import__(package)
-            utils.log_info(f"[OK] {package} is already installed.")
-        except ImportError:
-            missing_packages.append(package)
-    
-    # If there are missing packages, prompt user to install them
-    if missing_packages:
-        utils.log_warning("Missing required dependencies:")
-        for package in missing_packages:
-            print(f"- {package}")
-        
-        while True:
-            response = input("\nDo you want to install the missing dependencies? (y/n): ").strip().lower()
-            if response == 'y':
-                utils.log_info("Installing missing dependencies...")
-                for package in missing_packages:
-                    utils.log_info(f"Installing {package}...")
-                    os.system(f"pip install {package}")
-                
-                # Verify installations by attempting to import again
-                all_installed = True
-                for package in missing_packages:
-                    try:
-                        __import__(package)
-                        utils.log_success(f"{package} installed successfully.")
-                    except ImportError:
-                        utils.log_error(f"Failed to install {package}.")
-                        all_installed = False
-                
-                if not all_installed:
-                    utils.log_error("Some dependencies could not be installed. Please install them manually:")
-                    for package in missing_packages:
-                        print(f"pip install {package}")
-                    sys.exit(1)
-                break
-            elif response == 'n':
-                utils.log_error("Cannot proceed without required dependencies.")
-                utils.log_info("Please install the following packages manually and try again:")
-                for package in missing_packages:
-                    print(f"pip install {package}")
-                sys.exit(1)
-            else:
-                print("Invalid input. Please enter 'y' for yes or 'n' for no.")
-    
-    # Import required packages now that they're confirmed to be installed
-    global pd
-    import pandas as pd
+# Dependency checking handled by utils.ensure_dependencies()
 
 def get_aws_regions():
     """
@@ -177,21 +116,21 @@ def is_valid_aws_region(region_name):
 def get_security_group_info(rds_client, sg_ids):
     """
     Get security group names and IDs from a list of security group IDs.
-    
+
     Args:
         rds_client: The boto3 RDS client (used to determine region)
         sg_ids (list): A list of security group IDs
-        
+
     Returns:
         str: Formatted list of security group names and IDs in format "name (id), name (id), ..."
     """
     if not sg_ids:
         return ""
-    
+
     try:
         # Create EC2 client in the same region as the RDS client
         region = rds_client.meta.region_name
-        ec2_client = boto3.client('ec2', region_name=region)
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
         
         # Get security group information using EC2 describe_security_groups API
         response = ec2_client.describe_security_groups(GroupIds=sg_ids)
@@ -206,21 +145,21 @@ def get_security_group_info(rds_client, sg_ids):
 def get_vpc_info(rds_client, vpc_id):
     """
     Get VPC name and ID information from a VPC ID.
-    
+
     Args:
         rds_client: The boto3 RDS client (used to determine region)
         vpc_id (str): The VPC ID
-        
+
     Returns:
         str: Formatted VPC name and ID in format "name (id)" or just ID if name not found
     """
     if not vpc_id:
         return "N/A"
-    
+
     try:
         # Create EC2 client in the same region as the RDS client
         region = rds_client.meta.region_name
-        ec2_client = boto3.client('ec2', region_name=region)
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
         
         # Get VPC information using EC2 describe_vpcs API
         response = ec2_client.describe_vpcs(VpcIds=[vpc_id])
@@ -420,13 +359,14 @@ def calculate_rds_storage_cost(storage_size, storage_type, storage_pricing):
         utils.log_warning(f"Error calculating storage cost: {e}")
         return 'N/A'
 
+@utils.aws_error_handler("Retrieving RDS instances", default_return=[])
 def get_rds_instances(region):
     """
     Get all RDS instances in a specific AWS region with detailed information.
-    
+
     Args:
         region (str): AWS region name
-        
+
     Returns:
         list: List of dictionaries containing RDS instance information
     """
@@ -441,176 +381,159 @@ def get_rds_instances(region):
     pricing_data = load_rds_pricing_data()
     storage_pricing = load_storage_pricing_data()
 
-    try:
-        # Create RDS client for the specified AWS region
-        rds_client = boto3.client('rds', region_name=region)
-        
-        # Get all DB instances using pagination to handle large numbers of instances
-        paginator = rds_client.get_paginator('describe_db_instances')
-        page_iterator = paginator.paginate()
+    # Create RDS client for the specified AWS region
+    rds_client = utils.get_boto3_client('rds', region_name=region)
 
-        # Count total instances first for progress tracking
-        total_instances = 0
-        for page in paginator.paginate():
-            total_instances += len(page['DBInstances'])
+    # Get all DB instances using pagination to handle large numbers of instances
+    paginator = rds_client.get_paginator('describe_db_instances')
+    page_iterator = paginator.paginate()
 
-        if total_instances > 0:
-            utils.log_info(f"Found {total_instances} RDS instances in {region} to process")
+    # Count total instances first for progress tracking
+    total_instances = 0
+    for page in paginator.paginate():
+        total_instances += len(page['DBInstances'])
 
-        # Reset paginator for actual processing
-        paginator = rds_client.get_paginator('describe_db_instances')
-        page_iterator = paginator.paginate()
+    if total_instances > 0:
+        utils.log_info(f"Found {total_instances} RDS instances in {region} to process")
 
-        # Process each page of results
-        processed = 0
-        for page in page_iterator:
-            for instance in page['DBInstances']:
-                processed += 1
-                instance_id = instance.get('DBInstanceIdentifier', 'Unknown')
-                progress = (processed / total_instances) * 100 if total_instances > 0 else 0
+    # Reset paginator for actual processing
+    paginator = rds_client.get_paginator('describe_db_instances')
+    page_iterator = paginator.paginate()
 
-                utils.log_info(f"[{progress:.1f}%] Processing RDS instance {processed}/{total_instances}: {instance_id}")
-                # Extract security group IDs from VPC security groups
-                sg_ids = [sg['VpcSecurityGroupId'] for sg in instance.get('VpcSecurityGroups', [])]
-                sg_info = get_security_group_info(rds_client, sg_ids)
-                
-                # Get VPC information from DB subnet group
-                vpc_id = instance.get('DBSubnetGroup', {}).get('VpcId', 'N/A')
-                vpc_info = get_vpc_info(rds_client, vpc_id) if vpc_id != 'N/A' else 'N/A'
-                
-                # Get subnet IDs from DB subnet group
-                subnet_ids = get_subnet_ids(instance.get('DBSubnetGroup', {}))
-                
-                # Get port information from endpoint
-                port = instance.get('Endpoint', {}).get('Port', 'N/A') if 'Endpoint' in instance else 'N/A'
-                
-                # Get endpoint address - RDS connection endpoint
-                endpoint_address = instance.get('Endpoint', {}).get('Address', 'N/A') if 'Endpoint' in instance else 'N/A'
-                
-                # Get master username - the primary database user
-                master_username = instance.get('MasterUsername', 'N/A')
-                
-                # Determine if instance is part of a cluster and its role
-                db_cluster_id = instance.get('DBClusterIdentifier', 'N/A')
-                role = 'Standalone'
-                if db_cluster_id != 'N/A':
-                    try:
-                        # Get cluster info to determine if this instance is primary or replica
-                        cluster_info = rds_client.describe_db_clusters(
-                            DBClusterIdentifier=db_cluster_id
-                        )
-                        if cluster_info and 'DBClusters' in cluster_info and cluster_info['DBClusters']:
-                            cluster = cluster_info['DBClusters'][0]
-                            # Check if this instance is the primary (writer) in the cluster
-                            if 'DBClusterMembers' in cluster:
-                                for member in cluster['DBClusterMembers']:
-                                    if member.get('DBInstanceIdentifier') == instance['DBInstanceIdentifier']:
-                                        role = 'Primary' if member.get('IsClusterWriter', False) else 'Replica'
-                    except Exception as e:
-                        # If we can't determine cluster role, leave as default
-                        utils.log_warning(f"Could not determine cluster role for {instance['DBInstanceIdentifier']}: {e}")
-                
-                # Check for RDS Extended Support status
-                extended_support = 'No'
+    # Process each page of results
+    processed = 0
+    for page in page_iterator:
+        for instance in page['DBInstances']:
+            processed += 1
+            instance_id = instance.get('DBInstanceIdentifier', 'Unknown')
+            progress = (processed / total_instances) * 100 if total_instances > 0 else 0
+
+            utils.log_info(f"[{progress:.1f}%] Processing RDS instance {processed}/{total_instances}: {instance_id}")
+            # Extract security group IDs from VPC security groups
+            sg_ids = [sg['VpcSecurityGroupId'] for sg in instance.get('VpcSecurityGroups', [])]
+            sg_info = get_security_group_info(rds_client, sg_ids)
+
+            # Get VPC information from DB subnet group
+            vpc_id = instance.get('DBSubnetGroup', {}).get('VpcId', 'N/A')
+            vpc_info = get_vpc_info(rds_client, vpc_id) if vpc_id != 'N/A' else 'N/A'
+
+            # Get subnet IDs from DB subnet group
+            subnet_ids = get_subnet_ids(instance.get('DBSubnetGroup', {}))
+
+            # Get port information from endpoint
+            port = instance.get('Endpoint', {}).get('Port', 'N/A') if 'Endpoint' in instance else 'N/A'
+
+            # Get endpoint address - RDS connection endpoint
+            endpoint_address = instance.get('Endpoint', {}).get('Address', 'N/A') if 'Endpoint' in instance else 'N/A'
+
+            # Get master username - the primary database user
+            master_username = instance.get('MasterUsername', 'N/A')
+
+            # Determine if instance is part of a cluster and its role
+            db_cluster_id = instance.get('DBClusterIdentifier', 'N/A')
+            role = 'Standalone'
+            if db_cluster_id != 'N/A':
                 try:
-                    if 'StatusInfos' in instance:
-                        for status_info in instance['StatusInfos']:
-                            if status_info.get('Status') == 'extended-support':
-                                extended_support = 'Yes'
-                except Exception:
-                    pass
-                
-                # Format certificate expiry date
-                cert_expiry = 'N/A'
-                try:
-                    if 'CertificateDetails' in instance and 'ValidTill' in instance['CertificateDetails']:
-                        valid_till = instance['CertificateDetails']['ValidTill']
-                        if isinstance(valid_till, datetime.datetime):
-                            cert_expiry = valid_till.replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S')
-                except Exception:
-                    pass
-                
-                # Format creation time
-                created_time = 'N/A'
-                try:
-                    if 'InstanceCreateTime' in instance:
-                        create_time = instance['InstanceCreateTime']
-                        if isinstance(create_time, datetime.datetime):
-                            created_time = create_time.replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S')
-                except Exception:
-                    pass
-                
-                # Create comprehensive instance data dictionary
-                # Calculate monthly cost
-                monthly_cost = calculate_rds_monthly_cost(
-                    instance['DBInstanceClass'],
-                    instance['Engine'],
-                    pricing_data
-                )
+                    # Get cluster info to determine if this instance is primary or replica
+                    cluster_info = rds_client.describe_db_clusters(
+                        DBClusterIdentifier=db_cluster_id
+                    )
+                    if cluster_info and 'DBClusters' in cluster_info and cluster_info['DBClusters']:
+                        cluster = cluster_info['DBClusters'][0]
+                        # Check if this instance is the primary (writer) in the cluster
+                        if 'DBClusterMembers' in cluster:
+                            for member in cluster['DBClusterMembers']:
+                                if member.get('DBInstanceIdentifier') == instance['DBInstanceIdentifier']:
+                                    role = 'Primary' if member.get('IsClusterWriter', False) else 'Replica'
+                except Exception as e:
+                    # If we can't determine cluster role, leave as default
+                    utils.log_warning(f"Could not determine cluster role for {instance['DBInstanceIdentifier']}: {e}")
 
-                # Calculate storage cost
-                storage_cost = calculate_rds_storage_cost(
-                    instance['AllocatedStorage'],
-                    instance['StorageType'],
-                    storage_pricing
-                )
+            # Check for RDS Extended Support status
+            extended_support = 'No'
+            try:
+                if 'StatusInfos' in instance:
+                    for status_info in instance['StatusInfos']:
+                        if status_info.get('Status') == 'extended-support':
+                            extended_support = 'Yes'
+            except Exception:
+                pass
 
-                # Calculate total monthly cost
-                total_monthly_cost = 'N/A'
-                if monthly_cost != 'N/A' and storage_cost != 'N/A':
-                    total_monthly_cost = round(float(monthly_cost) + float(storage_cost), 2)
-                elif monthly_cost != 'N/A':
-                    total_monthly_cost = float(monthly_cost)
-                elif storage_cost != 'N/A':
-                    total_monthly_cost = float(storage_cost)
+            # Format certificate expiry date
+            cert_expiry = 'N/A'
+            try:
+                if 'CertificateDetails' in instance and 'ValidTill' in instance['CertificateDetails']:
+                    valid_till = instance['CertificateDetails']['ValidTill']
+                    if isinstance(valid_till, datetime.datetime):
+                        cert_expiry = valid_till.replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S')
+            except Exception:
+                pass
 
-                instance_data = {
-                    'DB Identifier': instance['DBInstanceIdentifier'],
-                    'DB Cluster Identifier': db_cluster_id,
-                    'Role': role,
-                    'Engine': instance['Engine'],
-                    'Engine Version': instance['EngineVersion'],
-                    'RDS Extended Support': extended_support,
-                    'Region': region,
-                    'Size': instance['DBInstanceClass'],
-                    'Monthly Cost (On-Demand)': monthly_cost,
-                    'Monthly Storage Cost': storage_cost,
-                    'Total Monthly Cost': total_monthly_cost,
-                    'Storage Type': instance['StorageType'],
-                    'Storage (GB)': instance['AllocatedStorage'],
-                    'Provisioned IOPS': instance.get('Iops', 'N/A'),
-                    'Port': port,
-                    'Endpoint': endpoint_address,  # RDS connection endpoint
-                    'Master Username': master_username,  # Primary database user
-                    'VPC': vpc_info,
-                    'Subnet IDs': subnet_ids,
-                    'Security Groups': sg_info,
-                    'DB Subnet Group Name': instance.get('DBSubnetGroup', {}).get('DBSubnetGroupName', 'N/A'),
-                    'DB Certificate Expiry': cert_expiry,
-                    'Created Time': created_time,
-                    'Encryption': 'Yes' if instance.get('StorageEncrypted', False) else 'No',
-                    'Owner ID': utils.get_account_name_formatted(instance.get('OwnerId', 'N/A'))
-                }
-                
-                rds_instances.append(instance_data)
+            # Format creation time
+            created_time = 'N/A'
+            try:
+                if 'InstanceCreateTime' in instance:
+                    create_time = instance['InstanceCreateTime']
+                    if isinstance(create_time, datetime.datetime):
+                        created_time = create_time.replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S')
+            except Exception:
+                pass
 
-                # Small delay to avoid API throttling
-                if processed < total_instances:  # Don't delay after the last instance
-                    time.sleep(0.1)
-        
-        return rds_instances
-    except botocore.exceptions.ClientError as e:
-        # Handle specific AWS client errors
-        if e.response['Error']['Code'] == 'AccessDenied':
-            utils.log_warning(f"Access denied in AWS region {region}. Skipping...")
-        elif e.response['Error']['Code'] == 'AuthFailure':
-            utils.log_warning(f"Authentication failure in AWS region {region}. Skipping...")
-        else:
-            utils.log_error(f"Error in AWS region {region}", e)
-        return []
-    except Exception as e:
-        utils.log_error(f"Error accessing AWS region {region}", e)
-        return []
+            # Create comprehensive instance data dictionary
+            # Calculate monthly cost
+            monthly_cost = calculate_rds_monthly_cost(
+                instance['DBInstanceClass'],
+                instance['Engine'],
+                pricing_data
+            )
+
+            # Calculate storage cost
+            storage_cost = calculate_rds_storage_cost(
+                instance['AllocatedStorage'],
+                instance['StorageType'],
+                storage_pricing
+            )
+
+            # Calculate total monthly cost
+            total_monthly_cost = 'N/A'
+            if monthly_cost != 'N/A' and storage_cost != 'N/A':
+                total_monthly_cost = round(float(monthly_cost) + float(storage_cost), 2)
+            elif monthly_cost != 'N/A':
+                total_monthly_cost = float(monthly_cost)
+            elif storage_cost != 'N/A':
+                total_monthly_cost = float(storage_cost)
+
+            instance_data = {
+                'DB Identifier': instance['DBInstanceIdentifier'],
+                'DB Cluster Identifier': db_cluster_id,
+                'Role': role,
+                'Engine': instance['Engine'],
+                'Engine Version': instance['EngineVersion'],
+                'RDS Extended Support': extended_support,
+                'Region': region,
+                'Size': instance['DBInstanceClass'],
+                'Monthly Cost (On-Demand)': monthly_cost,
+                'Monthly Storage Cost': storage_cost,
+                'Total Monthly Cost': total_monthly_cost,
+                'Storage Type': instance['StorageType'],
+                'Storage (GB)': instance['AllocatedStorage'],
+                'Provisioned IOPS': instance.get('Iops', 'N/A'),
+                'Port': port,
+                'Endpoint': endpoint_address,  # RDS connection endpoint
+                'Master Username': master_username,  # Primary database user
+                'VPC': vpc_info,
+                'Subnet IDs': subnet_ids,
+                'Security Groups': sg_info,
+                'DB Subnet Group Name': instance.get('DBSubnetGroup', {}).get('DBSubnetGroupName', 'N/A'),
+                'DB Certificate Expiry': cert_expiry,
+                'Created Time': created_time,
+                'Encryption': 'Yes' if instance.get('StorageEncrypted', False) else 'No',
+                'Owner ID': utils.get_account_name_formatted(instance.get('OwnerId', 'N/A'))
+            }
+
+            rds_instances.append(instance_data)
+
+    return rds_instances
 
 def export_to_excel(data, account_name, region_filter=None):
     """
@@ -631,20 +554,12 @@ def export_to_excel(data, account_name, region_filter=None):
     try:
         # Import pandas (should be installed by now)
         import pandas as pd
-        
-        # Process data to remove timezone information from datetime objects
-        processed_data = []
-        for item in data:
-            processed_item = {}
-            for key, value in item.items():
-                if isinstance(value, datetime.datetime) and value.tzinfo is not None:
-                    processed_item[key] = value.replace(tzinfo=None)
-                else:
-                    processed_item[key] = value
-            processed_data.append(processed_item)
-        
-        # Convert processed data to pandas DataFrame
-        df = pd.DataFrame(processed_data)
+
+        # Convert to pandas DataFrame
+        df = pd.DataFrame(data)
+
+        # Sanitize and prepare security-sensitive RDS data (contains usernames, endpoints)
+        df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(df))
         
         # Define output file name with date and optional region filter
         today = datetime.datetime.now().strftime("%m.%d.%Y")
@@ -691,9 +606,10 @@ def main():
     """
     # Print script title and get account information
     account_id, account_name = print_title()
-    
-    # Check and install dependencies before proceeding
-    check_and_install_dependencies()
+
+    # Check and install dependencies using utils function
+    if not utils.ensure_dependencies('pandas', 'openpyxl'):
+        return
     
     if account_name == "UNKNOWN-ACCOUNT":
         proceed = utils.prompt_for_confirmation("Unable to determine account name. Proceed anyway?", default=False)

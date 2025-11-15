@@ -99,12 +99,12 @@ def print_title():
     # Get the current AWS account ID
     try:
         # Create a new STS client to get the current account ID
-        sts_client = boto3.client('sts')
+        sts_client = utils.get_boto3_client('sts')
         # Get account ID from caller identity
         account_id = sts_client.get_caller_identity()['Account']
         # Map the account ID to an account name using utils module
         account_name = utils.get_account_name(account_id, default=account_id)
-        
+
         print(f"Account ID: {account_id}")
         print(f"Account Name: {account_name}")
     except Exception as e:
@@ -115,25 +115,21 @@ def print_title():
     print("====================================================================")
     return account_id, account_name
 
+@utils.aws_error_handler("Getting all regions", default_return=[
+    'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
+    'ca-central-1', 'eu-west-1', 'eu-west-2', 'eu-central-1',
+    'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1', 'ap-south-1'
+])
 def get_all_regions():
     """
     Get a list of all available AWS regions.
-    
+
     Returns:
         list: List of region names
     """
-    try:
-        ec2_client = boto3.client('ec2')
-        regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
-        return regions
-    except Exception as e:
-        print(f"Error getting regions: {e}")
-        # Return a default list of common regions
-        return [
-            'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
-            'ca-central-1', 'eu-west-1', 'eu-west-2', 'eu-central-1',
-            'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1', 'ap-south-1'
-        ]
+    ec2_client = utils.get_boto3_client('ec2')
+    regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
+    return regions
 
 def is_valid_region(region_name):
     """
@@ -289,8 +285,8 @@ def get_route_tables(region):
     
     try:
         # Create EC2 client for the region
-        ec2_client = boto3.client('ec2', region_name=region)
-        
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
+
         # Get all route tables in the region
         paginator = ec2_client.get_paginator('describe_route_tables')
         for page in paginator.paginate():

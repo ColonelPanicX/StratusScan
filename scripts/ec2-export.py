@@ -23,12 +23,8 @@ Features:
 """
 
 import sys
-import os
-import boto3
 import datetime
 import csv
-import time
-from io import StringIO
 from pathlib import Path
 import re
 
@@ -59,11 +55,11 @@ def get_os_info_from_ssm(instance_id, region):
     """
     Retrieve detailed operating system information using SSM with timeout safeguards
     Returns the full OS version string or 'Unknown OS' if unavailable
-    
+
     Note: SSM agent must be installed and running on the instance
     """
     try:
-        ssm = boto3.client('ssm', region_name=region)
+        ssm = utils.get_boto3_client('ssm', region_name=region)
         
         # Check if the instance is managed by SSM
         response = ssm.describe_instance_information(
@@ -437,41 +433,9 @@ def calculate_storage_cost(root_size, root_type, attached_volume_info, storage_p
         utils.log_warning(f"Error calculating storage cost: {e}")
         return 'N/A'
 
-def check_dependencies():
-    """Check and install required dependencies if user agrees"""
-    required_packages = ['pandas', 'openpyxl', 'boto3']
-    
-    for package in required_packages:
-        try:
-            __import__(package)
-            utils.log_info(f"[OK] {package} is already installed")
-        except ImportError:
-            print(f"\nPackage '{package}' is required but not installed.")
-            response = input(f"Would you like to install {package}? (y/n): ").lower()
-            
-            if response == 'y':
-                try:
-                    import subprocess
-                    print(f"Installing {package}...")
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                    utils.log_success(f"Successfully installed {package}")
-                except Exception as e:
-                    utils.log_error(f"Error installing {package}", e)
-                    sys.exit(1)
-            else:
-                print(f"Cannot proceed without {package}. Exiting...")
-                sys.exit(1)
+# Dependency checking handled by utils.ensure_dependencies()
 
-def get_account_info():
-    """Retrieve AWS account ID and map it to account name"""
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
-        account_name = utils.get_account_name(account_id, default="UNKNOWN-ACCOUNT")
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "UNKNOWN", "UNKNOWN-ACCOUNT"
+# Account info retrieval handled by utils.get_account_info()
 
 def get_aws_regions():
     """Get list of available AWS regions"""
@@ -490,6 +454,7 @@ def is_valid_aws_region(region_name):
     """Check if a region name is a valid AWS region"""
     return utils.is_aws_region(region_name)
 
+@utils.aws_error_handler("Retrieving EC2 instances", default_return=[])
 def get_instance_data(region, instance_filter=None):
     """
     Retrieve EC2 instance data for a specific AWS region
@@ -503,7 +468,7 @@ def get_instance_data(region, instance_filter=None):
         utils.log_error(f"Invalid AWS region: {region}")
         return []
 
-    ec2 = boto3.client('ec2', region_name=region)
+    ec2 = utils.get_boto3_client('ec2', region_name=region)
     instances = []
 
     # Load pricing data
@@ -654,10 +619,6 @@ def get_instance_data(region, instance_filter=None):
                 }
                 instances.append(instance_data)
 
-                # Small delay to avoid API throttling
-                if processed < total_instances:  # Don't delay after the last instance
-                    time.sleep(0.1)
-                
     except Exception as e:
         utils.log_error(f"Error getting instances in region {region}", e)
     
@@ -666,15 +627,16 @@ def get_instance_data(region, instance_filter=None):
 def main():
     """Main function to execute the script"""
     try:
-        # Check for required dependencies
-        check_dependencies()
-        
+        # Check for required dependencies using utils function
+        if not utils.ensure_dependencies('pandas', 'openpyxl', 'boto3'):
+            return
+
         # Import pandas after dependency check
         import pandas as pd
-        
-        # Get account information
+
+        # Get account information using utils function
         utils.log_info("Getting AWS account information...")
-        account_id, account_name = get_account_info()
+        account_id, account_name = utils.get_account_info()
 
         # Print script header
         print("\n====================================================================")
@@ -758,14 +720,14 @@ def main():
             sys.exit(0)
 
         utils.log_success(f"Total EC2 Instances found across all AWS regions: {total_instances}")
-        
-        # Create DataFrame and handle timezone-aware datetimes
+
+        # Create DataFrame and prepare for export
         utils.log_info("Preparing data for export to Excel format...")
         df = pd.DataFrame(all_instances)
-        
-        # Convert Launch Time to timezone-naive datetime
-        df['Launch Time'] = pd.to_datetime(df['Launch Time']).dt.tz_localize(None)
-        
+
+        # Sanitize and prepare EC2 data (tags may contain sensitive data)
+        df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(df))
+
         # Generate filename with filter and region info
         region_desc = "" if region_choice == "all" else f"-{region_choice}"
         

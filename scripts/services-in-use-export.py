@@ -95,6 +95,7 @@ def check_dependencies():
 
     return True
 
+@utils.aws_error_handler("Getting account information", default_return=("Unknown", "Unknown-AWS-Account"))
 def get_account_info():
     """
     Get the current AWS account ID and name with AWS validation.
@@ -102,18 +103,14 @@ def get_account_info():
     Returns:
         tuple: (account_id, account_name)
     """
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
+    sts = utils.get_boto3_client('sts')
+    account_id = sts.get_caller_identity()['Account']
 
-        # Validate AWS environment
-        caller_arn = sts.get_caller_identity()['Arn']
-        account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
+    # Validate AWS environment
+    caller_arn = sts.get_caller_identity()['Arn']
+    account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
 
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
+    return account_id, account_name
 
 def print_title():
     """
@@ -149,7 +146,7 @@ def get_services_from_cost_explorer():
     services_with_costs = {}
 
     try:
-        ce_client = boto3.client('ce', region_name='us-west-2')
+        ce_client = utils.get_boto3_client('ce', region_name='us-west-2')
 
         # Get cost data for the last 12 months
         end_date = datetime.datetime.now()
@@ -337,7 +334,7 @@ def discover_services_by_resource_enumeration():
                 utils.log_info(f"[{progress:.1f}%] Checking {service_name} in {region}")
 
                 try:
-                    client = boto3.client(check_config['client'], region_name=region)
+                    client = utils.get_boto3_client(check_config['client'], region_name=region)
 
                     if check_config['check_function'](client):
                         service_detected = True
@@ -355,9 +352,6 @@ def discover_services_by_resource_enumeration():
                     utils.log_warning(f"Service {service_name} not available in {region}")
                 except Exception as e:
                     utils.log_warning(f"Error checking {service_name} in {region}: {e}")
-
-                # Small delay to avoid API throttling
-                time.sleep(0.1)
 
             if service_detected:
                 discovered_services[service_name] = {
@@ -382,7 +376,7 @@ def get_services_from_cloudtrail():
     cloudtrail_services = {}
 
     try:
-        cloudtrail = boto3.client('cloudtrail', region_name='us-west-2')
+        cloudtrail = utils.get_boto3_client('cloudtrail', region_name='us-west-2')
 
         utils.log_info("Analyzing CloudTrail event history for service usage...")
 
@@ -620,13 +614,9 @@ def main():
         # Print title and get account info
         account_id, account_name = print_title()
 
-        # Validate AWS environment
-                print("Exiting script...")
-                sys.exit(0)
-
         try:
             # Test AWS credentials
-            sts = boto3.client('sts')
+            sts = utils.get_boto3_client('sts')
             sts.get_caller_identity()
             utils.log_success("AWS credentials validated")
 

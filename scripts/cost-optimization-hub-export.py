@@ -74,21 +74,19 @@ def check_and_install_dependencies():
     import pandas as pd
     global pd
 
+@utils.aws_error_handler("Getting account ID", default_return="UNKNOWN")
 def get_account_id():
     """
     Get the AWS account ID of the current session.
-    
+
     Returns:
         str: The AWS account ID
     """
-    try:
-        sts_client = boto3.client('sts')
-        account_id = sts_client.get_caller_identity()["Account"]
-        return account_id
-    except ClientError as e:
-        print(f"Error getting account ID: {e}")
-        sys.exit(1)
+    sts_client = utils.get_boto3_client('sts')
+    account_id = sts_client.get_caller_identity()["Account"]
+    return account_id
 
+@utils.aws_error_handler("Checking enrollment status", default_return=[])
 def check_enrollment_status(client):
     """
     Check if Cost Optimization Hub is enabled.
@@ -99,18 +97,14 @@ def check_enrollment_status(client):
     Returns:
         dict: Enrollment status information
     """
-    try:
-        paginator = client.get_paginator('list_enrollment_statuses')
-        page_iterator = paginator.paginate(includeOrganizationInfo=True)
+    paginator = client.get_paginator('list_enrollment_statuses')
+    page_iterator = paginator.paginate(includeOrganizationInfo=True)
 
-        statuses = []
-        for page in page_iterator:
-            statuses.extend(page.get('items', []))
+    statuses = []
+    for page in page_iterator:
+        statuses.extend(page.get('items', []))
 
-        return statuses
-    except ClientError as e:
-        utils.log_warning(f"Error checking enrollment status: {e}")
-        return []
+    return statuses
 
 def get_all_recommendations(client):
     """
@@ -143,6 +137,7 @@ def get_all_recommendations(client):
         return recommendations
 
     except ClientError as e:
+        # Business logic: Special handling for opt-in errors
         if 'OptInRequiredException' in str(e) or 'not subscribed' in str(e):
             utils.log_error("Cost Optimization Hub is not enabled for this account.")
             print("Please enable Cost Optimization Hub in the AWS Console:")
@@ -329,7 +324,7 @@ def main():
 
         # Validate AWS credentials
         try:
-            sts = boto3.client('sts')
+            sts = utils.get_boto3_client('sts')
             sts.get_caller_identity()
             utils.log_success("AWS credentials validated")
         except Exception as e:
@@ -366,7 +361,7 @@ def main():
             return
 
         # Create Cost Optimization Hub client (always use us-east-1)
-        client = boto3.client('cost-optimization-hub', region_name='us-east-1')
+        client = utils.get_boto3_client('cost-optimization-hub', region_name='us-east-1')
 
         # Check enrollment status
         utils.log_info("Checking Cost Optimization Hub enrollment status...")

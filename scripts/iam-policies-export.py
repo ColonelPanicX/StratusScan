@@ -19,16 +19,11 @@ Collected information includes: Policy Name, Type, ARN, Attachments, Permission 
 Risk Level, Wildcard Usage, Statement Analysis, and Usage Patterns.
 """
 
-import os
 import sys
-import boto3
 import datetime
-import time
 import json
 import re
-import urllib.parse
 from pathlib import Path
-from botocore.exceptions import ClientError, NoCredentialsError
 
 # Add path to import utils module
 try:
@@ -53,72 +48,7 @@ except ImportError:
         print("ERROR: Could not import the utils module. Make sure utils.py is in the StratusScan directory.")
         sys.exit(1)
 
-def check_dependencies():
-    """
-    Check if required dependencies are installed and offer to install them if missing.
 
-    Returns:
-        bool: True if all dependencies are satisfied, False otherwise
-    """
-    required_packages = ['pandas', 'openpyxl']
-    missing_packages = []
-
-    for package in required_packages:
-        try:
-            __import__(package)
-            utils.log_info(f"[OK] {package} is already installed")
-        except ImportError:
-            missing_packages.append(package)
-
-    if missing_packages:
-        utils.log_warning(f"Packages required but not installed: {', '.join(missing_packages)}")
-        response = input("Would you like to install these packages now? (y/n): ").lower().strip()
-
-        if response == 'y':
-            import subprocess
-            for package in missing_packages:
-                utils.log_info(f"Installing {package}...")
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                    utils.log_success(f"{package} installed successfully")
-                except subprocess.CalledProcessError as e:
-                    utils.log_error(f"Error installing {package}", e)
-                    return False
-        else:
-            print("Cannot continue without required packages. Exiting.")
-            return False
-
-    return True
-
-def get_account_info():
-    """
-    Get the current AWS account ID and name with AWS validation.
-
-    Returns:
-        tuple: (account_id, account_name)
-    """
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
-
-        # Validate AWS environment
-        caller_arn = sts.get_caller_identity()['Arn']
-        try:
-            iam_client = boto3.client('iam')
-            aliases = iam_client.list_account_aliases()['AccountAliases']
-            if aliases:
-                account_name = aliases[0]
-            else:
-                # Use utils module for account name mapping
-                account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
-        except Exception:
-            # Use utils module for account name mapping
-            account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
-
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
 
 def print_title():
     """
@@ -137,7 +67,7 @@ def print_title():
     print("====================================================================")
 
     # Get account information
-    account_id, account_name = get_account_info()
+    account_id, account_name = utils.get_account_info()
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")
@@ -278,6 +208,7 @@ def analyze_policy_document(policy_doc):
 
     return analysis
 
+@utils.aws_error_handler("Getting policy entities", default_return=('Unknown', 'Unknown', 'Unknown', 0))
 def get_policy_entities(iam_client, policy_arn):
     """
     Get entities (users, groups, roles) attached to a policy.
@@ -293,35 +224,31 @@ def get_policy_entities(iam_client, policy_arn):
     groups = []
     roles = []
 
-    try:
-        # Get policy entities
-        paginator = iam_client.get_paginator('list_entities_for_policy')
-        for page in paginator.paginate(PolicyArn=policy_arn):
-            # Users
-            for user in page.get('PolicyUsers', []):
-                users.append(user['UserName'])
+    # Get policy entities
+    paginator = iam_client.get_paginator('list_entities_for_policy')
+    for page in paginator.paginate(PolicyArn=policy_arn):
+        # Users
+        for user in page.get('PolicyUsers', []):
+            users.append(user['UserName'])
 
-            # Groups
-            for group in page.get('PolicyGroups', []):
-                groups.append(group['GroupName'])
+        # Groups
+        for group in page.get('PolicyGroups', []):
+            groups.append(group['GroupName'])
 
-            # Roles
-            for role in page.get('PolicyRoles', []):
-                roles.append(role['RoleName'])
+        # Roles
+        for role in page.get('PolicyRoles', []):
+            roles.append(role['RoleName'])
 
-        total_count = len(users) + len(groups) + len(roles)
+    total_count = len(users) + len(groups) + len(roles)
 
-        return (
-            ', '.join(users) if users else 'None',
-            ', '.join(groups) if groups else 'None',
-            ', '.join(roles) if roles else 'None',
-            total_count
-        )
+    return (
+        ', '.join(users) if users else 'None',
+        ', '.join(groups) if groups else 'None',
+        ', '.join(roles) if roles else 'None',
+        total_count
+    )
 
-    except Exception as e:
-        utils.log_warning(f"Could not get entities for policy {policy_arn}: {e}")
-        return 'Unknown', 'Unknown', 'Unknown', 0
-
+@utils.aws_error_handler("Collecting managed policies", default_return=[])
 def collect_managed_policies(iam_client, include_aws_managed=False):
     """
     Collect customer managed and optionally AWS managed policies.
@@ -335,27 +262,43 @@ def collect_managed_policies(iam_client, include_aws_managed=False):
     """
     policies_data = []
 
-    try:
-        # Get customer managed policies
-        utils.log_info("Collecting customer managed policies...")
-        paginator = iam_client.get_paginator('list_policies')
+    # Get customer managed policies
+    utils.log_info("Collecting customer managed policies...")
+    paginator = iam_client.get_paginator('list_policies')
 
-        # Count total policies first
-        total_policies = 0
-        for page in paginator.paginate(Scope='Local'):
+    # Count total policies first
+    total_policies = 0
+    for page in paginator.paginate(Scope='Local'):
+        total_policies += len(page['Policies'])
+
+    if include_aws_managed:
+        for page in paginator.paginate(Scope='AWS'):
             total_policies += len(page['Policies'])
 
-        if include_aws_managed:
-            for page in paginator.paginate(Scope='AWS'):
-                total_policies += len(page['Policies'])
+    utils.log_info(f"Found {total_policies} managed policies to process")
 
-        utils.log_info(f"Found {total_policies} managed policies to process")
+    processed = 0
 
-        processed = 0
+    # Process customer managed policies
+    paginator = iam_client.get_paginator('list_policies')
+    for page in paginator.paginate(Scope='Local'):
+        policies = page['Policies']
 
-        # Process customer managed policies
-        paginator = iam_client.get_paginator('list_policies')
-        for page in paginator.paginate(Scope='Local'):
+        for policy in policies:
+            processed += 1
+            progress = (processed / total_policies) * 100
+            policy_name = policy['PolicyName']
+
+            utils.log_info(f"[{progress:.1f}%] Processing policy {processed}/{total_policies}: {policy_name}")
+
+            policy_info = process_managed_policy(iam_client, policy, 'Customer Managed')
+            if policy_info:
+                policies_data.append(policy_info)
+
+    # Process AWS managed policies if requested
+    if include_aws_managed:
+        utils.log_info("Processing AWS managed policies...")
+        for page in paginator.paginate(Scope='AWS'):
             policies = page['Policies']
 
             for policy in policies:
@@ -363,35 +306,11 @@ def collect_managed_policies(iam_client, include_aws_managed=False):
                 progress = (processed / total_policies) * 100
                 policy_name = policy['PolicyName']
 
-                utils.log_info(f"[{progress:.1f}%] Processing policy {processed}/{total_policies}: {policy_name}")
+                utils.log_info(f"[{progress:.1f}%] Processing AWS policy {processed}/{total_policies}: {policy_name}")
 
-                policy_info = process_managed_policy(iam_client, policy, 'Customer Managed')
+                policy_info = process_managed_policy(iam_client, policy, 'AWS Managed')
                 if policy_info:
                     policies_data.append(policy_info)
-
-                time.sleep(0.05)  # Small delay to avoid throttling
-
-        # Process AWS managed policies if requested
-        if include_aws_managed:
-            utils.log_info("Processing AWS managed policies...")
-            for page in paginator.paginate(Scope='AWS'):
-                policies = page['Policies']
-
-                for policy in policies:
-                    processed += 1
-                    progress = (processed / total_policies) * 100
-                    policy_name = policy['PolicyName']
-
-                    utils.log_info(f"[{progress:.1f}%] Processing AWS policy {processed}/{total_policies}: {policy_name}")
-
-                    policy_info = process_managed_policy(iam_client, policy, 'AWS Managed')
-                    if policy_info:
-                        policies_data.append(policy_info)
-
-                    time.sleep(0.02)  # Smaller delay for AWS managed policies
-
-    except Exception as e:
-        utils.log_error("Error collecting managed policies", e)
 
     return policies_data
 
@@ -474,6 +393,7 @@ def process_managed_policy(iam_client, policy, policy_type):
         utils.log_warning(f"Error processing policy {policy.get('PolicyName', 'Unknown')}: {e}")
         return None
 
+@utils.aws_error_handler("Collecting inline policies", default_return=[])
 def collect_inline_policies(iam_client):
     """
     Collect inline policies from users, groups, and roles.
@@ -486,92 +406,82 @@ def collect_inline_policies(iam_client):
     """
     inline_policies = []
 
-    try:
-        utils.log_info("Collecting inline policies from users, groups, and roles...")
+    utils.log_info("Collecting inline policies from users, groups, and roles...")
 
-        # Count total entities first
-        total_entities = 0
-        user_paginator = iam_client.get_paginator('list_users')
-        for page in user_paginator.paginate():
-            total_entities += len(page['Users'])
+    # Count total entities first
+    total_entities = 0
+    user_paginator = iam_client.get_paginator('list_users')
+    for page in user_paginator.paginate():
+        total_entities += len(page['Users'])
 
-        group_paginator = iam_client.get_paginator('list_groups')
-        for page in group_paginator.paginate():
-            total_entities += len(page['Groups'])
+    group_paginator = iam_client.get_paginator('list_groups')
+    for page in group_paginator.paginate():
+        total_entities += len(page['Groups'])
 
-        role_paginator = iam_client.get_paginator('list_roles')
-        for page in role_paginator.paginate():
-            total_entities += len(page['Roles'])
+    role_paginator = iam_client.get_paginator('list_roles')
+    for page in role_paginator.paginate():
+        total_entities += len(page['Roles'])
 
-        utils.log_info(f"Scanning {total_entities} entities for inline policies...")
+    utils.log_info(f"Scanning {total_entities} entities for inline policies...")
 
-        processed = 0
+    processed = 0
 
-        # Process users
-        user_paginator = iam_client.get_paginator('list_users')
-        for page in user_paginator.paginate():
-            for user in page['Users']:
-                processed += 1
-                progress = (processed / total_entities) * 100
-                username = user['UserName']
+    # Process users
+    user_paginator = iam_client.get_paginator('list_users')
+    for page in user_paginator.paginate():
+        for user in page['Users']:
+            processed += 1
+            progress = (processed / total_entities) * 100
+            username = user['UserName']
 
-                utils.log_info(f"[{progress:.1f}%] Checking user {processed}/{total_entities}: {username}")
+            utils.log_info(f"[{progress:.1f}%] Checking user {processed}/{total_entities}: {username}")
 
-                try:
-                    user_policies = iam_client.list_user_policies(UserName=username)
-                    for policy_name in user_policies['PolicyNames']:
-                        policy_info = process_inline_policy(iam_client, 'User', username, policy_name)
-                        if policy_info:
-                            inline_policies.append(policy_info)
-                except Exception as e:
-                    utils.log_warning(f"Error getting inline policies for user {username}: {e}")
+            try:
+                user_policies = iam_client.list_user_policies(UserName=username)
+                for policy_name in user_policies['PolicyNames']:
+                    policy_info = process_inline_policy(iam_client, 'User', username, policy_name)
+                    if policy_info:
+                        inline_policies.append(policy_info)
+            except Exception as e:
+                utils.log_warning(f"Error getting inline policies for user {username}: {e}")
 
-                time.sleep(0.02)
+    # Process groups
+    group_paginator = iam_client.get_paginator('list_groups')
+    for page in group_paginator.paginate():
+        for group in page['Groups']:
+            processed += 1
+            progress = (processed / total_entities) * 100
+            groupname = group['GroupName']
 
-        # Process groups
-        group_paginator = iam_client.get_paginator('list_groups')
-        for page in group_paginator.paginate():
-            for group in page['Groups']:
-                processed += 1
-                progress = (processed / total_entities) * 100
-                groupname = group['GroupName']
+            utils.log_info(f"[{progress:.1f}%] Checking group {processed}/{total_entities}: {groupname}")
 
-                utils.log_info(f"[{progress:.1f}%] Checking group {processed}/{total_entities}: {groupname}")
+            try:
+                group_policies = iam_client.list_group_policies(GroupName=groupname)
+                for policy_name in group_policies['PolicyNames']:
+                    policy_info = process_inline_policy(iam_client, 'Group', groupname, policy_name)
+                    if policy_info:
+                        inline_policies.append(policy_info)
+            except Exception as e:
+                utils.log_warning(f"Error getting inline policies for group {groupname}: {e}")
 
-                try:
-                    group_policies = iam_client.list_group_policies(GroupName=groupname)
-                    for policy_name in group_policies['PolicyNames']:
-                        policy_info = process_inline_policy(iam_client, 'Group', groupname, policy_name)
-                        if policy_info:
-                            inline_policies.append(policy_info)
-                except Exception as e:
-                    utils.log_warning(f"Error getting inline policies for group {groupname}: {e}")
+    # Process roles
+    role_paginator = iam_client.get_paginator('list_roles')
+    for page in role_paginator.paginate():
+        for role in page['Roles']:
+            processed += 1
+            progress = (processed / total_entities) * 100
+            rolename = role['RoleName']
 
-                time.sleep(0.02)
+            utils.log_info(f"[{progress:.1f}%] Checking role {processed}/{total_entities}: {rolename}")
 
-        # Process roles
-        role_paginator = iam_client.get_paginator('list_roles')
-        for page in role_paginator.paginate():
-            for role in page['Roles']:
-                processed += 1
-                progress = (processed / total_entities) * 100
-                rolename = role['RoleName']
-
-                utils.log_info(f"[{progress:.1f}%] Checking role {processed}/{total_entities}: {rolename}")
-
-                try:
-                    role_policies = iam_client.list_role_policies(RoleName=rolename)
-                    for policy_name in role_policies['PolicyNames']:
-                        policy_info = process_inline_policy(iam_client, 'Role', rolename, policy_name)
-                        if policy_info:
-                            inline_policies.append(policy_info)
-                except Exception as e:
-                    utils.log_warning(f"Error getting inline policies for role {rolename}: {e}")
-
-                time.sleep(0.02)
-
-    except Exception as e:
-        utils.log_error("Error collecting inline policies", e)
+            try:
+                role_policies = iam_client.list_role_policies(RoleName=rolename)
+                for policy_name in role_policies['PolicyNames']:
+                    policy_info = process_inline_policy(iam_client, 'Role', rolename, policy_name)
+                    if policy_info:
+                        inline_policies.append(policy_info)
+            except Exception as e:
+                utils.log_warning(f"Error getting inline policies for role {rolename}: {e}")
 
     return inline_policies
 
@@ -677,10 +587,12 @@ def export_to_excel(managed_policies, inline_policies, account_id, account_name)
 
         if managed_policies:
             managed_df = pd.DataFrame(managed_policies)
+            managed_df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(managed_df))
             data_frames['Customer Managed Policies'] = managed_df
 
         if inline_policies:
             inline_df = pd.DataFrame(inline_policies)
+            inline_df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(inline_df))
             data_frames['Inline Policies'] = inline_df
 
         # Create summary data
@@ -753,6 +665,7 @@ def export_to_excel(managed_policies, inline_policies, account_id, account_name)
             }
 
         summary_df = pd.DataFrame(summary_data)
+        summary_df = utils.sanitize_for_export(utils.prepare_dataframe_for_export(summary_df))
         data_frames['Summary'] = summary_df
 
         # Save using utils function for multi-sheet Excel
@@ -831,7 +744,7 @@ def main():
     """
     try:
         # Check dependencies first
-        if not check_dependencies():
+        if not utils.ensure_dependencies('pandas', 'openpyxl'):
             return
 
         # Import pandas after dependency check
@@ -840,22 +753,6 @@ def main():
         # Print title and get account info
         account_id, account_name = print_title()
 
-        try:
-            # Test AWS credentials
-            sts = boto3.client('sts')
-            sts.get_caller_identity()
-            utils.log_success("AWS credentials validated")
-
-        except NoCredentialsError:
-            utils.log_error("AWS credentials not found. Please configure your credentials using:")
-            print("  - AWS CLI: aws configure")
-            print("  - Environment variables: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
-            print("  - IAM role (if running on EC2)")
-            return
-        except Exception as e:
-            utils.log_error("Error validating AWS credentials", e)
-            return
-
         # Ask user about AWS managed policies
         include_aws_managed = input("\nInclude AWS managed policies in the export? (y/n): ").lower().strip() == 'y'
 
@@ -863,7 +760,7 @@ def main():
         print("====================================================================")
 
         # Create IAM client
-        iam_client = boto3.client('iam', region_name='us-west-2')
+        iam_client = utils.get_boto3_client('iam', region_name='us-west-2')
 
         # Collect managed policies
         managed_policies = collect_managed_policies(iam_client, include_aws_managed)

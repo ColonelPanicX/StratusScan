@@ -87,35 +87,32 @@ def check_dependencies():
     
     return True
 
+@utils.aws_error_handler("Getting account information", default_return=("Unknown", "Unknown-AWS-Account"))
 def get_account_info():
     """
     Get the current AWS account ID and name with AWS validation.
-    
+
     Returns:
         tuple: (account_id, account_name)
     """
+    sts = utils.get_boto3_client('sts')
+    account_id = sts.get_caller_identity()['Account']
+
+    # Validate AWS environment
+    caller_arn = sts.get_caller_identity()['Arn']
     try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
-        
-        # Validate AWS environment
-        caller_arn = sts.get_caller_identity()['Arn']
-        try:
-            iam_client = boto3.client('iam')
-            aliases = iam_client.list_account_aliases()['AccountAliases']
-            if aliases:
-                account_name = aliases[0]
-            else:
-                # Use utils module for account name mapping
-                account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
-        except Exception:
+        iam_client = utils.get_boto3_client('iam')
+        aliases = iam_client.list_account_aliases()['AccountAliases']
+        if aliases:
+            account_name = aliases[0]
+        else:
             # Use utils module for account name mapping
             account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
-        
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
+    except Exception:
+        # Use utils module for account name mapping
+        account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
+
+    return account_id, account_name
 
 def print_title():
     """
@@ -167,89 +164,81 @@ def calculate_age_in_days(date_obj):
     except Exception:
         return "Unknown"
 
+@utils.aws_error_handler("Getting user MFA devices", default_return="Unknown")
 def get_user_mfa_devices(iam_client, username):
     """
     Get MFA devices for a user.
-    
+
     Args:
         iam_client: The boto3 IAM client
         username: The username to check
-        
+
     Returns:
         str: MFA status (Enabled/Disabled/Unknown)
     """
-    try:
-        # Check for virtual MFA devices
-        virtual_mfa = iam_client.list_mfa_devices(UserName=username)
-        mfa_devices = virtual_mfa.get('MFADevices', [])
-        
-        if mfa_devices:
-            return "Enabled"
-        else:
-            return "Disabled"
-    except Exception as e:
-        utils.log_warning(f"Could not check MFA for user {username}: {e}")
-        return "Unknown"
+    # Check for virtual MFA devices
+    virtual_mfa = iam_client.list_mfa_devices(UserName=username)
+    mfa_devices = virtual_mfa.get('MFADevices', [])
 
+    if mfa_devices:
+        return "Enabled"
+    else:
+        return "Disabled"
+
+@utils.aws_error_handler("Getting user groups", default_return="Unknown")
 def get_user_groups(iam_client, username):
     """
     Get groups that a user belongs to.
-    
+
     Args:
         iam_client: The boto3 IAM client
         username: The username to check
-        
+
     Returns:
         str: Comma-separated list of group names or descriptive string
     """
-    try:
-        response = iam_client.get_groups_for_user(UserName=username)
-        groups = [group['GroupName'] for group in response['Groups']]
-        return ", ".join(groups) if groups else "None"
-    except Exception as e:
-        utils.log_warning(f"Could not get groups for user {username}: {e}")
-        return "Unknown"
+    response = iam_client.get_groups_for_user(UserName=username)
+    groups = [group['GroupName'] for group in response['Groups']]
+    return ", ".join(groups) if groups else "None"
 
+@utils.aws_error_handler("Getting user policies", default_return="Unknown")
 def get_user_policies(iam_client, username):
     """
     Get all policies attached to a user (both attached and inline).
-    
+
     Args:
         iam_client: The boto3 IAM client
         username: The username to check
-        
+
     Returns:
         str: Comma-separated list of policy names or descriptive string
     """
     policies = []
-    
-    try:
-        # Get attached managed policies
-        attached_policies = iam_client.list_attached_user_policies(UserName=username)
-        for policy in attached_policies['AttachedPolicies']:
-            policies.append(policy['PolicyName'])
-        
-        # Get inline policies
-        inline_policies = iam_client.list_user_policies(UserName=username)
-        for policy_name in inline_policies['PolicyNames']:
-            policies.append(f"{policy_name} (Inline)")
-        
-        return ", ".join(policies) if policies else "None"
-    except Exception as e:
-        utils.log_warning(f"Could not get policies for user {username}: {e}")
-        return "Unknown"
+
+    # Get attached managed policies
+    attached_policies = iam_client.list_attached_user_policies(UserName=username)
+    for policy in attached_policies['AttachedPolicies']:
+        policies.append(policy['PolicyName'])
+
+    # Get inline policies
+    inline_policies = iam_client.list_user_policies(UserName=username)
+    for policy_name in inline_policies['PolicyNames']:
+        policies.append(f"{policy_name} (Inline)")
+
+    return ", ".join(policies) if policies else "None"
 
 def get_password_info(iam_client, username):
     """
     Get password-related information for a user.
-    
+
     Args:
         iam_client: The boto3 IAM client
         username: The username to check
-        
+
     Returns:
         tuple: (password_age, console_access)
     """
+    # Keep try-except for business logic: NoSuchEntity means user has no password
     try:
         login_profile = iam_client.get_login_profile(UserName=username)
         password_creation = login_profile['LoginProfile']['CreateDate']
@@ -265,62 +254,58 @@ def get_password_info(iam_client, username):
         utils.log_warning(f"Could not get password info for user {username}: {e}")
         return "Unknown", "Unknown"
 
+@utils.aws_error_handler("Getting access key information", default_return=("Unknown", "Unknown", "Unknown"))
 def get_access_key_info(iam_client, username):
     """
     Get access key information for a user.
-    
+
     Args:
         iam_client: The boto3 IAM client
         username: The username to check
-        
+
     Returns:
         tuple: (access_key_ids, active_key_age, access_key_last_used)
     """
-    try:
-        response = iam_client.list_access_keys(UserName=username)
-        access_keys = response['AccessKeyMetadata']
-        
-        if not access_keys:
-            return "None", "No Keys", "Never"
-        
-        # Process all access keys
-        key_info = []
-        active_ages = []
-        last_used_dates = []
-        
-        for key in access_keys:
-            key_id = key['AccessKeyId']
-            status = key['Status']
-            created_date = key['CreateDate']
-            
-            key_info.append(f"{key_id} ({status})")
-            
-            if status == 'Active':
-                key_age = calculate_age_in_days(created_date)
-                active_ages.append(str(key_age))
-                
-                # Get last used information
-                try:
-                    last_used_response = iam_client.get_access_key_last_used(AccessKeyId=key_id)
-                    last_used_date = last_used_response.get('AccessKeyLastUsed', {}).get('LastUsedDate')
-                    if last_used_date:
-                        days_since_used = calculate_age_in_days(last_used_date)
-                        last_used_dates.append(f"{days_since_used} days ago")
-                    else:
-                        last_used_dates.append("Never")
-                except Exception:
-                    last_used_dates.append("Unknown")
-        
-        # Format return values
-        access_key_ids = ", ".join(key_info)
-        active_key_age = ", ".join(active_ages) if active_ages else "No Active Keys"
-        access_key_last_used = ", ".join(last_used_dates) if last_used_dates else "Never"
-        
-        return access_key_ids, active_key_age, access_key_last_used
-        
-    except Exception as e:
-        utils.log_warning(f"Could not get access key info for user {username}: {e}")
-        return "Unknown", "Unknown", "Unknown"
+    response = iam_client.list_access_keys(UserName=username)
+    access_keys = response['AccessKeyMetadata']
+
+    if not access_keys:
+        return "None", "No Keys", "Never"
+
+    # Process all access keys
+    key_info = []
+    active_ages = []
+    last_used_dates = []
+
+    for key in access_keys:
+        key_id = key['AccessKeyId']
+        status = key['Status']
+        created_date = key['CreateDate']
+
+        key_info.append(f"{key_id} ({status})")
+
+        if status == 'Active':
+            key_age = calculate_age_in_days(created_date)
+            active_ages.append(str(key_age))
+
+            # Get last used information
+            try:
+                last_used_response = iam_client.get_access_key_last_used(AccessKeyId=key_id)
+                last_used_date = last_used_response.get('AccessKeyLastUsed', {}).get('LastUsedDate')
+                if last_used_date:
+                    days_since_used = calculate_age_in_days(last_used_date)
+                    last_used_dates.append(f"{days_since_used} days ago")
+                else:
+                    last_used_dates.append("Never")
+            except Exception:
+                last_used_dates.append("Unknown")
+
+    # Format return values
+    access_key_ids = ", ".join(key_info)
+    active_key_age = ", ".join(active_ages) if active_ages else "No Active Keys"
+    access_key_last_used = ", ".join(last_used_dates) if last_used_dates else "Never"
+
+    return access_key_ids, active_key_age, access_key_last_used
 
 def collect_iam_user_information():
     """
@@ -334,7 +319,7 @@ def collect_iam_user_information():
     try:
         # IAM is a global service but we need to specify a region for the client
         # In AWS, IAM endpoints are region-specific but the service is still global
-        iam_client = boto3.client('iam', region_name='us-west-2')
+        iam_client = utils.get_boto3_client('iam', region_name='us-west-2')
     except Exception as e:
         utils.log_error("Error creating IAM client", e)
         return []
@@ -397,11 +382,8 @@ def collect_iam_user_information():
                     'Console Access': console_access,
                     'Permission Policies': permission_policies
                 }
-                
+
                 user_data.append(user_info)
-                
-                # Small delay to avoid API throttling
-                time.sleep(0.1)
     
     except Exception as e:
         utils.log_error("Error collecting IAM user information", e)
@@ -503,7 +485,7 @@ def main():
 
         try:
             # Test AWS credentials
-            sts = boto3.client('sts')
+            sts = utils.get_boto3_client('sts')
             sts.get_caller_identity()
             utils.log_success("AWS credentials validated")
             

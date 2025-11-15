@@ -114,110 +114,93 @@ def print_title():
     
     return account_id, account_name
 
+@utils.aws_error_handler("Getting account information", default_return=("UNKNOWN", "UNKNOWN-ACCOUNT"))
 def get_account_info():
     """
     Get the current AWS account ID and name.
-    
+
     Returns:
         tuple: account_id, account_name
     """
-    try:
-        # Create a STS client
-        sts_client = boto3.client('sts')
-        
-        # Get the account ID
-        account_id = sts_client.get_caller_identity()["Account"]
-        
-        # Map to account name using utils
-        account_name = utils.get_account_name(account_id, default=account_id)
-        
-        return account_id, account_name
-    except Exception as e:
-        print(f"Error getting account information: {e}")
-        return "UNKNOWN", "UNKNOWN-ACCOUNT"
+    # Create a STS client
+    sts_client = utils.get_boto3_client('sts')
 
+    # Get the account ID
+    account_id = sts_client.get_caller_identity()["Account"]
+
+    # Map to account name using utils
+    account_name = utils.get_account_name(account_id, default=account_id)
+
+    return account_id, account_name
+
+@utils.aws_error_handler("Getting AWS regions", default_return=[
+    'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
+    'ca-central-1', 'eu-west-1', 'eu-west-2', 'eu-central-1',
+    'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1', 'ap-south-1',
+    'sa-east-1'
+])
 def get_all_regions():
     """
     Get a list of all available AWS regions.
-    
+
     Returns:
         list: List of region names
     """
-    try:
-        # Create EC2 client to get regions
-        ec2_client = boto3.client('ec2')
-        
-        # Get all regions
-        regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
-        return regions
-    except Exception as e:
-        print(f"Error getting AWS regions: {e}")
-        
-        # Fallback to common regions if we can't get the full list
-        return [
-            'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
-            'ca-central-1', 'eu-west-1', 'eu-west-2', 'eu-central-1',
-            'ap-southeast-1', 'ap-southeast-2', 'ap-northeast-1', 'ap-south-1',
-            'sa-east-1'
-        ]
+    # Create EC2 client to get regions
+    ec2_client = utils.get_boto3_client('ec2')
 
+    # Get all regions
+    regions = [region['RegionName'] for region in ec2_client.describe_regions()['Regions']]
+    return regions
+
+@utils.aws_error_handler("Getting task definition details", default_return={})
 def get_task_definition_details(ecs_client, task_definition_arn):
     """
     Get details for a specific task definition.
-    
+
     Args:
         ecs_client: The boto3 ECS client
         task_definition_arn: The task definition ARN
-        
+
     Returns:
         dict: Task definition details
     """
-    try:
-        response = ecs_client.describe_task_definition(taskDefinition=task_definition_arn)
-        return response['taskDefinition']
-    except Exception as e:
-        print(f"Error getting task definition details for {task_definition_arn}: {e}")
-        return {}
+    response = ecs_client.describe_task_definition(taskDefinition=task_definition_arn)
+    return response['taskDefinition']
 
+@utils.aws_error_handler("Getting target group info", default_return={})
 def get_target_group_info(elbv2_client, target_group_arn):
     """
     Get details for a specific target group.
-    
+
     Args:
         elbv2_client: The boto3 ELBv2 client
         target_group_arn: The target group ARN
-        
+
     Returns:
         dict: Target group details
     """
-    try:
-        response = elbv2_client.describe_target_groups(TargetGroupArns=[target_group_arn])
-        if response and 'TargetGroups' in response and response['TargetGroups']:
-            return response['TargetGroups'][0]
-        return {}
-    except Exception as e:
-        print(f"Error getting target group details for {target_group_arn}: {e}")
-        return {}
+    response = elbv2_client.describe_target_groups(TargetGroupArns=[target_group_arn])
+    if response and 'TargetGroups' in response and response['TargetGroups']:
+        return response['TargetGroups'][0]
+    return {}
 
+@utils.aws_error_handler("Getting load balancer name", default_return='Unknown')
 def get_load_balancer_name(elbv2_client, load_balancer_arn):
     """
     Get the name of a load balancer from its ARN.
-    
+
     Args:
         elbv2_client: The boto3 ELBv2 client
         load_balancer_arn: The load balancer ARN
-        
+
     Returns:
         str: The load balancer name
     """
-    try:
-        response = elbv2_client.describe_load_balancers(LoadBalancerArns=[load_balancer_arn])
-        if response and 'LoadBalancers' in response and response['LoadBalancers']:
-            return response['LoadBalancers'][0].get('LoadBalancerName', 'Unknown')
-        return 'Unknown'
-    except Exception as e:
-        print(f"Error getting load balancer name for {load_balancer_arn}: {e}")
-        return 'Unknown'
+    response = elbv2_client.describe_load_balancers(LoadBalancerArns=[load_balancer_arn])
+    if response and 'LoadBalancers' in response and response['LoadBalancers']:
+        return response['LoadBalancers'][0].get('LoadBalancerName', 'Unknown')
+    return 'Unknown'
 
 def get_ecs_resources(region):
     """
@@ -234,9 +217,9 @@ def get_ecs_resources(region):
     
     try:
         # Create ECS, ELBv2, and EC2 clients for this region
-        ecs_client = boto3.client('ecs', region_name=region)
-        elbv2_client = boto3.client('elbv2', region_name=region)
-        ec2_client = boto3.client('ec2', region_name=region)
+        ecs_client = utils.get_boto3_client('ecs', region_name=region)
+        elbv2_client = utils.get_boto3_client('elbv2', region_name=region)
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
         
         # Get all ECS clusters
         cluster_arns = []
@@ -510,8 +493,6 @@ def main():
         for region in regions_to_scan:
             region_resources = get_ecs_resources(region)
             all_ecs_resources.extend(region_resources)
-            # Add a small delay to avoid throttling
-            time.sleep(0.5)
         
         if not all_ecs_resources:
             print("\nNo ECS resources found in the scanned regions.")

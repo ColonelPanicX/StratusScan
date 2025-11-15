@@ -9,20 +9,14 @@ Version: v2.0.0
 Date: AUG-19-2025
 
 Description:
-This script exports VPC, subnet, NAT Gateway, VPC Peering Connection, and Elastic IP information 
-from AWS regions into an Excel file with separate worksheets. The output filename 
-includes the AWS account name based on the account ID mapping in the configuration and includes 
+This script exports VPC, subnet, NAT Gateway, VPC Peering Connection, and Elastic IP information
+from AWS regions into an Excel file with separate worksheets. The output filename
+includes the AWS account name based on the account ID mapping in the configuration and includes
 AWS identifiers for compliance and audit purposes.
+"""
 
-import os
 import sys
-import csv
-import json
 import datetime
-import time
-import boto3
-from botocore.exceptions import ClientError
-from time import sleep
 from pathlib import Path
 
 # Add path to import utils module
@@ -62,7 +56,7 @@ def print_title():
     # Get the current AWS account ID and validate AWS environment
     try:
         # Create a new STS client to get the current account ID
-        sts_client = boto3.client('sts')
+        sts_client = utils.get_boto3_client('sts')
         # Call get-caller-identity to retrieve the account ID
         account_id = sts_client.get_caller_identity().get('Account')
         
@@ -80,30 +74,6 @@ def print_title():
     print("====================================================================")
     return account_id, account_name
 
-def check_and_install_dependencies():
-    """Check and install required dependencies if needed."""
-    required_packages = ['pandas', 'openpyxl', 'boto3']
-    
-    for package in required_packages:
-        try:
-            # Try to import the package to check if it's installed
-            __import__(package)
-            utils.log_info(f"[OK] {package} is already installed")
-        except ImportError:
-            # If import fails, offer to install the package
-            response = input(f"{package} is not installed. Do you want to install it? (y/n): ")
-            if response.lower() == 'y':
-                try:
-                    import subprocess
-                    print(f"Installing {package}...")
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                    utils.log_success(f"Successfully installed {package}")
-                except Exception as e:
-                    utils.log_error(f"Error installing {package}", e)
-                    sys.exit(1)
-            else:
-                print(f"Cannot proceed without {package}. Exiting...")
-                sys.exit(1)
 
 def get_aws_regions():
     """Get a list of available AWS regions."""
@@ -173,36 +143,37 @@ def is_subnet_public(ec2_client, subnet_id, vpc_id):
         utils.log_warning(f"Error checking if subnet {subnet_id} is public: {e}")
         return "Unknown"
 
+@utils.aws_error_handler("Collecting VPC and subnet data", default_return=[])
 def collect_vpc_subnet_data(regions):
     """
     Collect VPC and subnet information from AWS regions.
-    
+
     Args:
         regions: List of AWS regions to scan
-        
+
     Returns:
         list: List of dictionaries with subnet information
     """
     print("\n=== COLLECTING VPC AND SUBNET INFORMATION ===")
     all_subnet_data = []
-    
+
     # Process each region
     for region in regions:
         # Validate region is AWS
         if not utils.validate_aws_region(region):
             utils.log_error(f"Skipping invalid AWS region: {region}")
             continue
-            
-        print(f"\nProcessing AWS region: {region}")
-        
+
         try:
+            print(f"\nProcessing AWS region: {region}")
+
             # Create EC2 client for this region
-            ec2_client = boto3.client('ec2', region_name=region)
-            
+            ec2_client = utils.get_boto3_client('ec2', region_name=region)
+
             # Get all VPCs in the region
             vpc_response = ec2_client.describe_vpcs()
             vpcs = vpc_response.get('Vpcs', [])
-            
+
             print(f"Found {len(vpcs)} VPCs in AWS region {region}")
 
             # Process each VPC
@@ -210,7 +181,7 @@ def collect_vpc_subnet_data(regions):
                 vpc_id = vpc['VpcId']
                 vpc_progress = (vpc_index / len(vpcs)) * 100 if len(vpcs) > 0 else 0
                 print(f"  [{vpc_progress:.1f}%] Processing VPC {vpc_index}/{len(vpcs)}: {vpc_id}")
-                
+
                 # Get all subnets for this VPC
                 subnet_response = ec2_client.describe_subnets(
                     Filters=[
@@ -221,7 +192,7 @@ def collect_vpc_subnet_data(regions):
                     ]
                 )
                 subnets = subnet_response.get('Subnets', [])
-                
+
                 print(f"    Found {len(subnets)} subnets")
 
                 # Process each subnet
@@ -230,7 +201,7 @@ def collect_vpc_subnet_data(regions):
                     subnet_progress = (subnet_index / len(subnets)) * 100 if len(subnets) > 0 else 0
                     if len(subnets) > 1:  # Only show subnet progress if there are multiple subnets
                         print(f"      [{subnet_progress:.1f}%] Processing subnet {subnet_index}/{len(subnets)}: {subnet_id}")
-                    
+
                     # Extract subnet name from tags
                     subnet_name = None
                     if 'Tags' in subnet:
@@ -238,11 +209,11 @@ def collect_vpc_subnet_data(regions):
                             if tag['Key'] == 'Name':
                                 subnet_name = tag['Value']
                                 break
-                    
+
                     availability_zone = subnet['AvailabilityZone']
                     ipv4_cidr = subnet['CidrBlock']
                     ipv4_address_count = subnet.get('AvailableIpAddressCount', 'N/A')
-                    
+
                     # Get IPv6 CIDR if available
                     ipv6_cidr = 'N/A'
                     if 'Ipv6CidrBlockAssociationSet' in subnet and subnet['Ipv6CidrBlockAssociationSet']:
@@ -250,11 +221,11 @@ def collect_vpc_subnet_data(regions):
                             if ipv6_assoc.get('Ipv6CidrBlockState', {}).get('State') == 'associated':
                                 ipv6_cidr = ipv6_assoc.get('Ipv6CidrBlock', 'N/A')
                                 break
-                    
+
                     # Determine if subnet is public or private
                     public_status = is_subnet_public(ec2_client, subnet_id, vpc_id)
                     public_private = "Public" if public_status else "Private"
-                    
+
                     # Append subnet data to the list
                     subnet_data = {
                         'Region': region,
@@ -269,10 +240,6 @@ def collect_vpc_subnet_data(regions):
                     }
                     all_subnet_data.append(subnet_data)
 
-                    # Small delay to avoid API throttling
-                    if subnet_index < len(subnets):  # Don't delay after the last subnet
-                        time.sleep(0.1)
-        
         except Exception as e:
             utils.log_error(f"Error processing AWS region {region} for VPCs/Subnets", e)
             continue
@@ -280,299 +247,250 @@ def collect_vpc_subnet_data(regions):
     utils.log_success(f"Total subnets collected: {len(all_subnet_data)}")
     return all_subnet_data
 
+@utils.aws_error_handler("Collecting NAT Gateway data", default_return=[])
 def collect_nat_gateway_data(regions):
     """
     Collect NAT Gateway information from AWS regions.
-    
+
     Args:
         regions: List of AWS regions to scan
-        
+
     Returns:
         list: List of dictionaries with NAT Gateway information
     """
     print("\n=== COLLECTING NAT GATEWAY INFORMATION ===")
     all_nat_gateways = []
-    
+
     # Process each region for NAT Gateways
     for region in regions:
         # Validate region is AWS
         if not utils.validate_aws_region(region):
             utils.log_error(f"Skipping invalid AWS region: {region}")
             continue
-            
+
         print(f"\nSearching for NAT Gateways in AWS region: {region}")
-        
-        try:
-            # Create EC2 client for this region
-            ec2_client = boto3.client('ec2', region_name=region)
-            
-            # Get NAT Gateways in the region
-            try:
-                nat_gw_response = ec2_client.describe_nat_gateways()
-                nat_gws = nat_gw_response.get('NatGateways', [])
-                print(f"  Found {len(nat_gws)} NAT Gateways")
-                
-                # Process each NAT Gateway
-                for nat_gw in nat_gws:
-                    try:
-                        nat_gw_id = nat_gw.get('NatGatewayId', '')
-                        print(f"    Processing NAT Gateway: {nat_gw_id}")
-                        
-                        state = nat_gw.get('State', '')
-                        connectivity = nat_gw.get('ConnectivityType', '')
-                        vpc_id = nat_gw.get('VpcId', '')
-                        subnet_id = nat_gw.get('SubnetId', '')
-                        
-                        # Get creation timestamp and format it
-                        creation_timestamp = nat_gw.get('CreateTime', '')
-                        if creation_timestamp:
-                            try:
-                                # Convert to datetime object and then to string format
-                                creation_date = creation_timestamp.strftime('%Y-%m-%d') if isinstance(creation_timestamp, datetime.datetime) else str(creation_timestamp)
-                            except Exception as e:
-                                utils.log_warning(f"Error formatting date: {str(e)}")
-                                creation_date = str(creation_timestamp)
-                        else:
-                            creation_date = ""
-                        
-                        # Extract name from tags
-                        name = None
-                        if 'Tags' in nat_gw:
-                            for tag in nat_gw['Tags']:
-                                if tag['Key'] == 'Name':
-                                    name = tag['Value']
-                                    break
-                        
-                        # Get primary network interface details
-                        primary_public_ip = ""
-                        primary_private_ip = ""
-                        primary_eni_id = ""
-                        
-                        nat_addresses = nat_gw.get('NatGatewayAddresses', [])
-                        if nat_addresses:
-                            primary_nat_address = nat_addresses[0]
-                            primary_public_ip = primary_nat_address.get('PublicIp', '')
-                            primary_private_ip = primary_nat_address.get('PrivateIp', '')
-                            primary_eni_id = primary_nat_address.get('NetworkInterfaceId', '')
-                        
-                        # Add to results
-                        all_nat_gateways.append({
-                            'Region': region,
-                            'Name': name if name else 'N/A',
-                            'NAT Gateway ID': nat_gw_id,
-                            'State': state,
-                            'Connectivity': connectivity,
-                            'Primary Public IPv4': primary_public_ip,
-                            'Primary Private IPv4': primary_private_ip,
-                            'Primary Network Interface ID': primary_eni_id,
-                            'VPC': vpc_id,
-                            'Subnet': subnet_id,
-                            'Creation Date': creation_date
-                        })
-                    except Exception as e:
-                        utils.log_error(f"Error processing NAT Gateway {nat_gw_id}", e)
-                        continue
-                
-            except Exception as e:
-                utils.log_error(f"Error retrieving NAT Gateways in AWS region {region}", e)
-        
-        except Exception as e:
-            utils.log_error(f"Error processing AWS region {region} for NAT Gateways", e)
-            continue
-        
-        # Add a small delay to avoid API throttling
-        sleep(0.5)
-    
+
+        # Create EC2 client for this region
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
+
+        # Get NAT Gateways in the region
+        nat_gw_response = ec2_client.describe_nat_gateways()
+        nat_gws = nat_gw_response.get('NatGateways', [])
+        print(f"  Found {len(nat_gws)} NAT Gateways")
+
+        # Process each NAT Gateway
+        for nat_gw in nat_gws:
+            nat_gw_id = nat_gw.get('NatGatewayId', '')
+            print(f"    Processing NAT Gateway: {nat_gw_id}")
+
+            state = nat_gw.get('State', '')
+            connectivity = nat_gw.get('ConnectivityType', '')
+            vpc_id = nat_gw.get('VpcId', '')
+            subnet_id = nat_gw.get('SubnetId', '')
+
+            # Get creation timestamp and format it
+            creation_timestamp = nat_gw.get('CreateTime', '')
+            if creation_timestamp:
+                # Convert to datetime object and then to string format
+                creation_date = creation_timestamp.strftime('%Y-%m-%d') if isinstance(creation_timestamp, datetime.datetime) else str(creation_timestamp)
+            else:
+                creation_date = ""
+
+            # Extract name from tags
+            name = None
+            if 'Tags' in nat_gw:
+                for tag in nat_gw['Tags']:
+                    if tag['Key'] == 'Name':
+                        name = tag['Value']
+                        break
+
+            # Get primary network interface details
+            primary_public_ip = ""
+            primary_private_ip = ""
+            primary_eni_id = ""
+
+            nat_addresses = nat_gw.get('NatGatewayAddresses', [])
+            if nat_addresses:
+                primary_nat_address = nat_addresses[0]
+                primary_public_ip = primary_nat_address.get('PublicIp', '')
+                primary_private_ip = primary_nat_address.get('PrivateIp', '')
+                primary_eni_id = primary_nat_address.get('NetworkInterfaceId', '')
+
+            # Add to results
+            all_nat_gateways.append({
+                'Region': region,
+                'Name': name if name else 'N/A',
+                'NAT Gateway ID': nat_gw_id,
+                'State': state,
+                'Connectivity': connectivity,
+                'Primary Public IPv4': primary_public_ip,
+                'Primary Private IPv4': primary_private_ip,
+                'Primary Network Interface ID': primary_eni_id,
+                'VPC': vpc_id,
+                'Subnet': subnet_id,
+                'Creation Date': creation_date
+            })
+
     utils.log_success(f"Total NAT Gateways collected: {len(all_nat_gateways)}")
     return all_nat_gateways
 
+@utils.aws_error_handler("Collecting VPC Peering data", default_return=[])
 def collect_vpc_peering_data(regions):
     """
     Collect VPC Peering Connection information from AWS regions.
-    
+
     Args:
         regions: List of AWS regions to scan
-        
+
     Returns:
         list: List of dictionaries with VPC Peering information
     """
     print("\n=== COLLECTING VPC PEERING CONNECTION INFORMATION ===")
     all_vpc_peerings = []
-    
+
     # Process each region for VPC Peering Connections
     for region in regions:
         # Validate region is AWS
         if not utils.validate_aws_region(region):
             utils.log_error(f"Skipping invalid AWS region: {region}")
             continue
-            
+
         print(f"\nSearching for VPC Peering Connections in AWS region: {region}")
-        
-        try:
-            # Create EC2 client for this region
-            ec2_client = boto3.client('ec2', region_name=region)
-            
-            # Get VPC Peering Connections in the region
-            try:
-                peering_response = ec2_client.describe_vpc_peering_connections()
-                peerings = peering_response.get('VpcPeeringConnections', [])
-                print(f"  Found {len(peerings)} VPC Peering Connections")
-                
-                # Process each VPC Peering Connection
-                for peering in peerings:
-                    try:
-                        peering_id = peering.get('VpcPeeringConnectionId', '')
-                        print(f"    Processing VPC Peering Connection: {peering_id}")
-                        
-                        # Get peering status
-                        status = peering.get('Status', {}).get('Code', '')
-                        
-                        # Get requester VPC information
-                        requester_info = peering.get('RequesterVpcInfo', {})
-                        requester_vpc = requester_info.get('VpcId', '')
-                        requester_cidr = requester_info.get('CidrBlock', '')
-                        requester_owner = requester_info.get('OwnerId', '')
-                        requester_region = requester_info.get('Region', '')
-                        
-                        # Get accepter VPC information
-                        accepter_info = peering.get('AccepterVpcInfo', {})
-                        accepter_vpc = accepter_info.get('VpcId', '')
-                        accepter_cidr = accepter_info.get('CidrBlock', '')
-                        accepter_owner = accepter_info.get('OwnerId', '')
-                        accepter_region = accepter_info.get('Region', '')
-                        
-                        # Format account owner IDs with names if available
-                        requester_owner_formatted = utils.get_account_name_formatted(requester_owner)
-                        accepter_owner_formatted = utils.get_account_name_formatted(accepter_owner)
-                        
-                        # Extract name from tags
-                        name = None
-                        if 'Tags' in peering:
-                            for tag in peering['Tags']:
-                                if tag['Key'] == 'Name':
-                                    name = tag['Value']
-                                    break
-                        
-                        # Add to results
-                        all_vpc_peerings.append({
-                            'Name': name if name else 'N/A',
-                            'Peering Connection ID': peering_id,
-                            'Status': status,
-                            'Requester VPC': requester_vpc,
-                            'Accepter VPC': accepter_vpc,
-                            'Requester CIDR': requester_cidr,
-                            'Accepter CIDR': accepter_cidr,
-                            'Requester Owner ID': requester_owner_formatted,
-                            'Accepter Owner ID': accepter_owner_formatted,
-                            'Requester Region': requester_region,
-                            'Accepter Region': accepter_region
-                        })
-                    except Exception as e:
-                        utils.log_error(f"Error processing VPC Peering Connection {peering_id}", e)
-                        continue
-                
-            except Exception as e:
-                utils.log_error(f"Error retrieving VPC Peering Connections in AWS region {region}", e)
-        
-        except Exception as e:
-            utils.log_error(f"Error processing AWS region {region} for VPC Peering Connections", e)
-            continue
-        
-        # Add a small delay to avoid API throttling
-        sleep(0.5)
-    
+
+        # Create EC2 client for this region
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
+
+        # Get VPC Peering Connections in the region
+        peering_response = ec2_client.describe_vpc_peering_connections()
+        peerings = peering_response.get('VpcPeeringConnections', [])
+        print(f"  Found {len(peerings)} VPC Peering Connections")
+
+        # Process each VPC Peering Connection
+        for peering in peerings:
+            peering_id = peering.get('VpcPeeringConnectionId', '')
+            print(f"    Processing VPC Peering Connection: {peering_id}")
+
+            # Get peering status
+            status = peering.get('Status', {}).get('Code', '')
+
+            # Get requester VPC information
+            requester_info = peering.get('RequesterVpcInfo', {})
+            requester_vpc = requester_info.get('VpcId', '')
+            requester_cidr = requester_info.get('CidrBlock', '')
+            requester_owner = requester_info.get('OwnerId', '')
+            requester_region = requester_info.get('Region', '')
+
+            # Get accepter VPC information
+            accepter_info = peering.get('AccepterVpcInfo', {})
+            accepter_vpc = accepter_info.get('VpcId', '')
+            accepter_cidr = accepter_info.get('CidrBlock', '')
+            accepter_owner = accepter_info.get('OwnerId', '')
+            accepter_region = accepter_info.get('Region', '')
+
+            # Format account owner IDs with names if available
+            requester_owner_formatted = utils.get_account_name_formatted(requester_owner)
+            accepter_owner_formatted = utils.get_account_name_formatted(accepter_owner)
+
+            # Extract name from tags
+            name = None
+            if 'Tags' in peering:
+                for tag in peering['Tags']:
+                    if tag['Key'] == 'Name':
+                        name = tag['Value']
+                        break
+
+            # Add to results
+            all_vpc_peerings.append({
+                'Name': name if name else 'N/A',
+                'Peering Connection ID': peering_id,
+                'Status': status,
+                'Requester VPC': requester_vpc,
+                'Accepter VPC': accepter_vpc,
+                'Requester CIDR': requester_cidr,
+                'Accepter CIDR': accepter_cidr,
+                'Requester Owner ID': requester_owner_formatted,
+                'Accepter Owner ID': accepter_owner_formatted,
+                'Requester Region': requester_region,
+                'Accepter Region': accepter_region
+            })
+
     utils.log_success(f"Total VPC Peering Connections collected: {len(all_vpc_peerings)}")
     return all_vpc_peerings
 
+@utils.aws_error_handler("Collecting Elastic IP data", default_return=[])
 def collect_elastic_ip_data(regions):
     """
     Collect Elastic IP information from AWS regions.
-    
+
     Args:
         regions: List of AWS regions to scan
-        
+
     Returns:
         list: List of dictionaries with Elastic IP information
     """
     print("\n=== COLLECTING ELASTIC IP INFORMATION ===")
     all_elastic_ips = []
-    
+
     # Process each region for Elastic IPs
     for region in regions:
         # Validate region is AWS
         if not utils.validate_aws_region(region):
             utils.log_error(f"Skipping invalid AWS region: {region}")
             continue
-            
+
         print(f"\nSearching for Elastic IPs in AWS region: {region}")
-        
-        try:
-            # Create EC2 client for this region
-            ec2_client = boto3.client('ec2', region_name=region)
-            
-            # Get Elastic IPs in the region
-            try:
-                eip_response = ec2_client.describe_addresses()
-                eips = eip_response.get('Addresses', [])
-                print(f"  Found {len(eips)} Elastic IPs")
-                
-                # Process each Elastic IP
-                for eip in eips:
-                    try:
-                        allocated_ip = eip.get('PublicIp', '')
-                        print(f"    Processing Elastic IP: {allocated_ip}")
-                        
-                        # Get EIP attributes
-                        allocation_id = eip.get('AllocationId', '')
-                        domain_type = eip.get('Domain', '')  # 'vpc' or 'standard'
-                        
-                        # Get associated information if available
-                        instance_id = eip.get('InstanceId', '')
-                        private_ip = eip.get('PrivateIpAddress', '')
-                        association_id = eip.get('AssociationId', '')
-                        network_interface_id = eip.get('NetworkInterfaceId', '')
-                        network_interface_owner_id = eip.get('NetworkInterfaceOwnerId', '')
-                        network_border_group = eip.get('NetworkBorderGroup', '')
-                        
-                        # Get Public DNS (Reverse DNS record)
-                        public_dns = eip.get('PublicDnsName', '')
-                        
-                        # Extract name from tags
-                        name = None
-                        if 'Tags' in eip:
-                            for tag in eip['Tags']:
-                                if tag['Key'] == 'Name':
-                                    name = tag['Value']
-                                    break
-                        
-                        # Add to results
-                        all_elastic_ips.append({
-                            'Region': region,
-                            'Name': name if name else 'N/A',
-                            'Allocated IPv4': allocated_ip,
-                            'Type': domain_type,
-                            'Allocation ID': allocation_id,
-                            'Reverse DNS Record': public_dns,
-                            'Associated Instance ID': instance_id,
-                            'Private IPv4': private_ip,
-                            'Association ID': association_id,
-                            'Network Interface Owner ID': network_interface_owner_id,
-                            'Network Border Group': network_border_group
-                        })
-                    except Exception as e:
-                        utils.log_error(f"Error processing Elastic IP {allocated_ip}", e)
-                        continue
-                
-            except Exception as e:
-                utils.log_error(f"Error retrieving Elastic IPs in AWS region {region}", e)
-        
-        except Exception as e:
-            utils.log_error(f"Error processing AWS region {region} for Elastic IPs", e)
-            continue
-        
-        # Add a small delay to avoid API throttling
-        sleep(0.5)
-    
+
+        # Create EC2 client for this region
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
+
+        # Get Elastic IPs in the region
+        eip_response = ec2_client.describe_addresses()
+        eips = eip_response.get('Addresses', [])
+        print(f"  Found {len(eips)} Elastic IPs")
+
+        # Process each Elastic IP
+        for eip in eips:
+            allocated_ip = eip.get('PublicIp', '')
+            print(f"    Processing Elastic IP: {allocated_ip}")
+
+            # Get EIP attributes
+            allocation_id = eip.get('AllocationId', '')
+            domain_type = eip.get('Domain', '')  # 'vpc' or 'standard'
+
+            # Get associated information if available
+            instance_id = eip.get('InstanceId', '')
+            private_ip = eip.get('PrivateIpAddress', '')
+            association_id = eip.get('AssociationId', '')
+            network_interface_id = eip.get('NetworkInterfaceId', '')
+            network_interface_owner_id = eip.get('NetworkInterfaceOwnerId', '')
+            network_border_group = eip.get('NetworkBorderGroup', '')
+
+            # Get Public DNS (Reverse DNS record)
+            public_dns = eip.get('PublicDnsName', '')
+
+            # Extract name from tags
+            name = None
+            if 'Tags' in eip:
+                for tag in eip['Tags']:
+                    if tag['Key'] == 'Name':
+                        name = tag['Value']
+                        break
+
+            # Add to results
+            all_elastic_ips.append({
+                'Region': region,
+                'Name': name if name else 'N/A',
+                'Allocated IPv4': allocated_ip,
+                'Type': domain_type,
+                'Allocation ID': allocation_id,
+                'Reverse DNS Record': public_dns,
+                'Associated Instance ID': instance_id,
+                'Private IPv4': private_ip,
+                'Association ID': association_id,
+                'Network Interface Owner ID': network_interface_owner_id,
+                'Network Border Group': network_border_group
+            })
+
     utils.log_success(f"Total Elastic IPs collected: {len(all_elastic_ips)}")
     return all_elastic_ips
 
@@ -696,11 +614,17 @@ def export_vpc_subnet_natgw_peering_info(account_id, account_name):
         if all_elastic_ip_data:
             data_frames['Elastic IPs'] = pd.DataFrame(all_elastic_ip_data)
     
-    # STEP 5: Save the Excel file using utils module
+    # STEP 5: Prepare and sanitize all DataFrames
+    for sheet_name in data_frames:
+        data_frames[sheet_name] = utils.sanitize_for_export(
+            utils.prepare_dataframe_for_export(data_frames[sheet_name])
+        )
+
+    # STEP 6: Save the Excel file using utils module
     if not data_frames:
         utils.log_warning("No data was collected. Nothing to export.")
         return
-    
+
     # Save using utils module for consistent formatting
     try:
         output_path = utils.save_multiple_dataframes_to_excel(data_frames, final_excel_file)
@@ -724,13 +648,10 @@ def main():
     try:
         # Print title and get account information
         account_id, account_name = print_title()
-        
+
         # Check and install dependencies
-        check_and_install_dependencies()
-        
-        # Validate AWS environment
-                print("Exiting script...")
-                sys.exit(0)
+        if not utils.ensure_dependencies('pandas', 'openpyxl'):
+            sys.exit(1)
         
         # Check if account name is unknown
         if account_name == "unknown":

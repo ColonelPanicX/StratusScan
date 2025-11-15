@@ -102,24 +102,21 @@ def check_and_install_dependencies():
     import pandas as pd
     global pd
 
+@utils.aws_error_handler("Getting account ID", default_return="Unknown")
 def get_account_id():
     """
     Get the AWS account ID of the current session.
-    
+
     Returns:
         str: The AWS account ID
     """
-    try:
-        # Create a STS client
-        sts_client = boto3.client('sts')
-        
-        # Get the current account ID
-        account_id = sts_client.get_caller_identity()["Account"]
-        
-        return account_id
-    except ClientError as e:
-        print(f"Error getting account ID: {e}")
-        sys.exit(1)
+    # Create a STS client
+    sts_client = utils.get_boto3_client('sts')
+
+    # Get the current account ID
+    account_id = sts_client.get_caller_identity()["Account"]
+
+    return account_id
 
 def get_trusted_advisor_checks():
     """
@@ -131,7 +128,7 @@ def get_trusted_advisor_checks():
     try:
         # Create a Support client (requires Business or Enterprise Support plan)
         # Trusted Advisor is only available in us-east-1
-        support_client = boto3.client('support', region_name='us-east-1')
+        support_client = utils.get_boto3_client('support', region_name='us-east-1')
 
         # Get all Trusted Advisor checks
         response = support_client.describe_trusted_advisor_checks(language='en')
@@ -147,6 +144,7 @@ def get_trusted_advisor_checks():
             utils.log_error(f"Error accessing Trusted Advisor checks: {e}")
         sys.exit(1)
 
+@utils.aws_error_handler("Getting Trusted Advisor check result", default_return=None)
 def get_check_result(check_id):
     """
     Get the detailed results for a specific Trusted Advisor check.
@@ -157,20 +155,16 @@ def get_check_result(check_id):
     Returns:
         dict: The detailed results of the check
     """
-    try:
-        # Create a Support client - Trusted Advisor is only available in us-east-1
-        support_client = boto3.client('support', region_name='us-east-1')
+    # Create a Support client - Trusted Advisor is only available in us-east-1
+    support_client = utils.get_boto3_client('support', region_name='us-east-1')
 
-        # Get the check result
-        response = support_client.describe_trusted_advisor_check_result(
-            checkId=check_id,
-            language='en'
-        )
+    # Get the check result
+    response = support_client.describe_trusted_advisor_check_result(
+        checkId=check_id,
+        language='en'
+    )
 
-        return response['result']
-    except ClientError as e:
-        utils.log_warning(f"Error getting check result for {check_id}: {e}")
-        return None
+    return response['result']
 
 def get_all_check_results():
     """
@@ -417,7 +411,7 @@ def main():
 
         # Validate AWS credentials
         try:
-            sts = boto3.client('sts')
+            sts = utils.get_boto3_client('sts')
             sts.get_caller_identity()
             utils.log_success("AWS credentials validated")
         except Exception as e:

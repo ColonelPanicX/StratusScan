@@ -16,10 +16,7 @@ file for analysis and compliance purposes.
 """
 
 import sys
-import os
-import boto3
 import datetime
-import time
 from pathlib import Path
 
 # Add path to import utils module
@@ -45,45 +42,6 @@ except ImportError:
         print("ERROR: Could not import the utils module. Make sure utils.py is in the StratusScan directory.")
         sys.exit(1)
 
-def check_dependencies():
-    """
-    Check if required dependencies are installed and offer to install them if missing.
-    
-    Returns:
-        bool: True if all dependencies are satisfied, False otherwise
-    """
-    required_packages = ['pandas', 'openpyxl']
-    missing_packages = []
-    
-    for package in required_packages:
-        try:
-            __import__(package)
-            utils.log_info(f"[OK] {package} is already installed")
-        except ImportError:
-            missing_packages.append(package)
-    
-    if missing_packages:
-        utils.log_warning(f"Packages required but not installed: {', '.join(missing_packages)}")
-        response = input("Would you like to install these packages now? (y/n): ").lower()
-        
-        if response == 'y':
-            import subprocess
-            for package in missing_packages:
-                utils.log_info(f"Installing {package}...")
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                    utils.log_success(f"Successfully installed {package}")
-                except Exception as e:
-                    utils.log_error(f"Error installing {package}", e)
-                    print("Please install it manually with: pip install " + package)
-                    return False
-            return True
-        else:
-            print("Cannot proceed without required dependencies.")
-            return False
-    
-    return True
-
 def print_title():
     """
     Print the script title banner and get account info.
@@ -100,22 +58,11 @@ def print_title():
     print("Environment: AWS Commercial")
     print("====================================================================")
     
-    # Get the current AWS account ID
-    try:
-        # Create a new STS client to get the current account ID
-        sts_client = boto3.client('sts')
-        # Get account ID from caller identity
-        account_id = sts_client.get_caller_identity()['Account']
-        
-        # Map the account ID to an account name using utils module
-        account_name = utils.get_account_name(account_id, default=account_id)
-        
-        print(f"Account ID: {account_id}")
-        print(f"Account Name: {account_name}")
-    except Exception as e:
-        utils.log_error("Could not determine account information", e)
-        account_id = "UNKNOWN"
-        account_name = "UNKNOWN-ACCOUNT"
+    # Get account information using utils
+    account_id, account_name = utils.get_account_info()
+
+    print(f"Account ID: {account_id}")
+    print(f"Account Name: {account_name}")
     
     print("====================================================================")
     return account_id, account_name
@@ -203,6 +150,7 @@ def format_rule(rule):
     
     return f"{rule_number}: {action.upper()} {protocol}:{port_range} from {cidr}"
 
+@utils.aws_error_handler("Collecting Network ACL data", default_return=[])
 def get_nacl_data(region):
     """
     Get Network ACL information for a specific AWS region.
@@ -217,74 +165,70 @@ def get_nacl_data(region):
     if not utils.validate_aws_region(region):
         utils.log_error(f"Invalid AWS region: {region}")
         return []
-    
+
     nacl_data = []
-    
-    try:
-        # Create EC2 client for the specified AWS region
-        ec2_client = boto3.client('ec2', region_name=region)
-        
-        # Get all NACLs in the region
-        response = ec2_client.describe_network_acls()
-        
-        for nacl in response.get('NetworkAcls', []):
-            nacl_id = nacl.get('NetworkAclId', 'N/A')
-            vpc_id = nacl.get('VpcId', 'N/A')
-            is_default = nacl.get('IsDefault', False)
-            
-            # Get NACL name from tags
-            nacl_name = get_tag_value(nacl.get('Tags', []))
-            
-            # Format tags as a string
-            tags_str = '; '.join([f"{tag['Key']}={tag['Value']}" for tag in nacl.get('Tags', [])])
-            if not tags_str:
-                tags_str = "N/A"
-            
-            # Get inbound and outbound rules
-            inbound_rules = [rule for rule in nacl.get('Entries', []) if not rule.get('Egress', False)]
-            outbound_rules = [rule for rule in nacl.get('Entries', []) if rule.get('Egress', False)]
-            
-            # Format rules as strings
-            inbound_rules_str = '; '.join([format_rule(rule) for rule in sorted(inbound_rules, key=lambda x: x.get('RuleNumber', 0))])
-            outbound_rules_str = '; '.join([format_rule(rule) for rule in sorted(outbound_rules, key=lambda x: x.get('RuleNumber', 0))])
-            
-            if not inbound_rules_str:
-                inbound_rules_str = "N/A"
-            if not outbound_rules_str:
-                outbound_rules_str = "N/A"
-            
-            # Get subnet associations
-            subnet_associations = []
-            for assoc in nacl.get('Associations', []):
-                subnet_id = assoc.get('SubnetId', 'N/A')
-                if subnet_id != 'N/A':
-                    subnet_associations.append(subnet_id)
-            
-            subnet_associations_str = '; '.join(subnet_associations) if subnet_associations else "N/A"
-            
-            # Get owner information
-            owner_id = nacl.get('OwnerId', 'N/A')
-            owner_formatted = utils.get_account_name_formatted(owner_id)
-            
-            # Add NACL data
-            nacl_entry = {
-                'Region': region,
-                'NACL ID': nacl_id,
-                'NACL Name': nacl_name,
-                'VPC ID': vpc_id,
-                'Is Default': 'Yes' if is_default else 'No',
-                'Inbound Rules': inbound_rules_str,
-                'Outbound Rules': outbound_rules_str,
-                'Subnet Associations': subnet_associations_str,
-                'Owner ID': owner_formatted,
-                'Tags': tags_str
-            }
-            
-            nacl_data.append(nacl_entry)
-            
-    except Exception as e:
-        utils.log_error(f"Error collecting NACL data in AWS region {region}", e)
-    
+
+    # Create EC2 client for the specified AWS region
+    ec2_client = utils.get_boto3_client('ec2', region_name=region)
+
+    # Get all NACLs in the region
+    response = ec2_client.describe_network_acls()
+
+    for nacl in response.get('NetworkAcls', []):
+        nacl_id = nacl.get('NetworkAclId', 'N/A')
+        vpc_id = nacl.get('VpcId', 'N/A')
+        is_default = nacl.get('IsDefault', False)
+
+        # Get NACL name from tags
+        nacl_name = get_tag_value(nacl.get('Tags', []))
+
+        # Format tags as a string
+        tags_str = '; '.join([f"{tag['Key']}={tag['Value']}" for tag in nacl.get('Tags', [])])
+        if not tags_str:
+            tags_str = "N/A"
+
+        # Get inbound and outbound rules
+        inbound_rules = [rule for rule in nacl.get('Entries', []) if not rule.get('Egress', False)]
+        outbound_rules = [rule for rule in nacl.get('Entries', []) if rule.get('Egress', False)]
+
+        # Format rules as strings
+        inbound_rules_str = '; '.join([format_rule(rule) for rule in sorted(inbound_rules, key=lambda x: x.get('RuleNumber', 0))])
+        outbound_rules_str = '; '.join([format_rule(rule) for rule in sorted(outbound_rules, key=lambda x: x.get('RuleNumber', 0))])
+
+        if not inbound_rules_str:
+            inbound_rules_str = "N/A"
+        if not outbound_rules_str:
+            outbound_rules_str = "N/A"
+
+        # Get subnet associations
+        subnet_associations = []
+        for assoc in nacl.get('Associations', []):
+            subnet_id = assoc.get('SubnetId', 'N/A')
+            if subnet_id != 'N/A':
+                subnet_associations.append(subnet_id)
+
+        subnet_associations_str = '; '.join(subnet_associations) if subnet_associations else "N/A"
+
+        # Get owner information
+        owner_id = nacl.get('OwnerId', 'N/A')
+        owner_formatted = utils.get_account_name_formatted(owner_id)
+
+        # Add NACL data
+        nacl_entry = {
+            'Region': region,
+            'NACL ID': nacl_id,
+            'NACL Name': nacl_name,
+            'VPC ID': vpc_id,
+            'Is Default': 'Yes' if is_default else 'No',
+            'Inbound Rules': inbound_rules_str,
+            'Outbound Rules': outbound_rules_str,
+            'Subnet Associations': subnet_associations_str,
+            'Owner ID': owner_formatted,
+            'Tags': tags_str
+        }
+
+        nacl_data.append(nacl_entry)
+
     return nacl_data
 
 def main():
@@ -296,7 +240,7 @@ def main():
         account_id, account_name = print_title()
         
         # Check for required dependencies
-        if not check_dependencies():
+        if not utils.ensure_dependencies('pandas', 'openpyxl'):
             sys.exit(1)
             
         # Now import pandas after ensuring it's installed
@@ -347,20 +291,16 @@ def main():
             region_data = get_nacl_data(region)
             all_nacl_data.extend(region_data)
             utils.log_info(f"Found {len(region_data)} NACLs in {region}")
-            
-            # Add a small delay to avoid API throttling
-            time.sleep(0.5)
-        
-        # Check if we found any NACLs
-        if not all_nacl_data:
-            utils.log_warning("No Network ACLs found in any AWS region. Exiting...")
-            sys.exit(0)
-        
-        # Create DataFrame
-        utils.log_info("Preparing data for export to Excel format...")
+
+        # Create DataFrame from collected data
         df = pd.DataFrame(all_nacl_data)
-        
-        # Generate filename
+
+        # Prepare and sanitize DataFrame (NACLs may have sensitive tags)
+        df = utils.sanitize_for_export(
+            utils.prepare_dataframe_for_export(df)
+        )
+
+        # Get current date for filename
         current_date = datetime.datetime.now().strftime("%m.%d.%Y")
 
         # Use utils module to generate filename and save data
@@ -370,7 +310,7 @@ def main():
             region_suffix,
             current_date
         )
-        
+
         # Save data using the utility function
         output_path = utils.save_dataframe_to_excel(df, filename)
         

@@ -29,13 +29,13 @@ Usage:
 - python configure.py --perms  (AWS permissions check only)
 """
 
-import os
-import sys
 import json
 import re
 import subprocess
-import boto3
+import sys
 from pathlib import Path
+
+import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
 def print_header():
@@ -51,16 +51,16 @@ def print_header():
 def validate_account_id(account_id):
     """
     Validate that the account ID is a 12-digit number.
-    
+
     Args:
         account_id (str): The account ID to validate
-        
+
     Returns:
         bool: True if valid, False otherwise
     """
     # Remove any whitespace
     account_id = account_id.strip()
-    
+
     # Check if it's exactly 12 digits
     pattern = re.compile(r'^\d{12}$')
     return bool(pattern.match(account_id))
@@ -109,21 +109,21 @@ def get_aws_region_choice():
 def load_existing_config(config_path):
     """
     Load existing configuration file if it exists.
-    
+
     Args:
         config_path (Path): Path to the config file
-        
+
     Returns:
         dict: Existing configuration or default structure
     """
     if config_path.exists():
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
+        except (json.JSONDecodeError, OSError) as e:
             print(f"Warning: Could not read existing config file: {e}")
             print("Creating new configuration...")
-    
+
     # Return default AWS configuration structure
     return {
         "__comment": "StratusScan Configuration - Customize this file for your environment",
@@ -178,32 +178,32 @@ def load_existing_config(config_path):
 def get_account_mappings():
     """
     Interactively collect account ID and name mappings from the user.
-    
+
     Returns:
         dict: Dictionary of account ID to name mappings
     """
     mappings = {}
-    
+
     print("\n" + "=" * 50)
     print("ACCOUNT MAPPING CONFIGURATION")
     print("=" * 50)
     print("Enter your AWS account ID and corresponding friendly name.")
     print("You can add multiple accounts. Press Enter without input when done.")
     print()
-    
+
     while True:
         print(f"\nAccount #{len(mappings) + 1}:")
-        
+
         # Get Account ID
         while True:
             account_id = input("Enter AWS Account ID (12 digits) or press Enter to finish: ").strip()
-            
+
             # If empty, user is done
             if not account_id:
                 if len(mappings) == 0:
                     print("Warning: No account mappings configured. You can add them later by running this script again.")
                 return mappings
-            
+
             # Validate account ID format
             if validate_account_id(account_id):
                 # Check if account ID already exists
@@ -214,23 +214,23 @@ def get_account_mappings():
                 break
             else:
                 print("Invalid account ID. Must be exactly 12 digits (e.g., 123456789012)")
-        
+
         # Get Account Name
         while True:
             account_name = input(f"Enter friendly name for account {account_id}: ").strip()
             if account_name:
                 break
             print("Account name cannot be empty.")
-        
+
         # Store the mapping
         mappings[account_id] = account_name
         print(f"Added: {account_id} -> {account_name}")
-        
+
         # Ask if user wants to add more
         more = input("\nWould you like to add another account? (y/n): ").lower().strip()
         if more != 'y':
             break
-    
+
     return mappings
 
 def get_organization_name(current_org="YOUR-ORGANIZATION"):
@@ -253,7 +253,7 @@ def get_organization_name(current_org="YOUR-ORGANIZATION"):
 def update_resource_preferences(config, default_region):
     """
     Update resource preferences with the selected default region.
-    
+
     Args:
         config (dict): Configuration dictionary
         default_region (str): Selected default region
@@ -266,7 +266,7 @@ def update_resource_preferences(config, default_region):
 def save_configuration(config, config_path):
     """
     Save the configuration to the JSON file.
-    
+
     Args:
         config (dict): Configuration dictionary
         config_path (Path): Path to save the config file
@@ -277,14 +277,14 @@ def save_configuration(config, config_path):
             backup_path = config_path.with_suffix('.json.backup')
             config_path.rename(backup_path)
             print(f"Backup created: {backup_path}")
-        
+
         # Save new configuration
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
-        
+
         print(f"\nConfiguration saved successfully to: {config_path}")
         return True
-        
+
     except Exception as e:
         print(f"Error saving configuration: {e}")
         return False
@@ -292,7 +292,7 @@ def save_configuration(config, config_path):
 def display_summary(config):
     """
     Display a summary of the current configuration.
-    
+
     Args:
         config (dict): Configuration dictionary
     """
@@ -306,7 +306,7 @@ def display_summary(config):
     # Default regions
     default_regions = config.get('default_regions', [])
     print(f"Default Regions: {', '.join(default_regions)}")
-    
+
     # Account mappings
     mappings = config.get('account_mappings', {})
     print(f"\nAccount Mappings ({len(mappings)} configured):")
@@ -315,11 +315,11 @@ def display_summary(config):
             print(f"  {account_id} -> {name}")
     else:
         print("  None configured")
-    
+
     # Resource preferences (show EC2 default region as example)
     ec2_region = config.get('resource_preferences', {}).get('ec2', {}).get('default_region', 'Not set')
     print(f"\nDefault Resource Region: {ec2_region}")
-    
+
     print("=" * 50)
 
 def check_dependencies():
@@ -914,7 +914,7 @@ def main():
         # Get default AWS region
         print(f"\nCurrent default regions: {', '.join(config.get('default_regions', []))}")
         change_region = input("Would you like to change the primary default region? (y/n): ").lower().strip()
-        
+
         if change_region == 'y':
             default_region = get_aws_region_choice()
             # Update all default regions to prioritize the selected one
@@ -923,24 +923,24 @@ def main():
             # Update resource preferences
             update_resource_preferences(config, default_region)
             print(f"Default region updated to: {default_region}")
-        
+
         # Get account mappings
         print(f"\nCurrent account mappings: {len(config.get('account_mappings', {}))}")
         modify_accounts = input("Would you like to add/modify account mappings? (y/n): ").lower().strip()
-        
+
         if modify_accounts == 'y':
             new_mappings = get_account_mappings()
             # Merge with existing mappings
             existing_mappings = config.get('account_mappings', {})
             existing_mappings.update(new_mappings)
             config['account_mappings'] = existing_mappings
-        
+
         # Display final configuration summary
         display_summary(config)
-        
+
         # Confirm save
         save_confirm = input("\nSave this configuration? (y/n): ").lower().strip()
-        
+
         if save_confirm == 'y':
             if save_configuration(config, config_path):
                 print("\n✅ Configuration completed successfully!")
@@ -951,7 +951,7 @@ def main():
                 sys.exit(1)
         else:
             print("\nConfiguration not saved. Exiting...")
-    
+
     except KeyboardInterrupt:
         print("\n\nConfiguration cancelled by user.")
         sys.exit(0)

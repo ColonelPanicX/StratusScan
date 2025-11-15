@@ -4,33 +4,40 @@
 = AWS RESOURCE SCANNER =
 ===========================
 
-Title: AWS Route 53 Export Tool
+Title: AWS Route 53 DNS Service Export Tool
 Version: v1.0.0
-Date: OCT-27-2025
+Date: NOV-11-2025
 
 Description:
-This script exports comprehensive Route 53 information from AWS including hosted zones,
-DNS records, resolver endpoints, resolver rules, DNS Firewall configurations, and query
-logging settings into an Excel file with separate worksheets. The output filename
-includes the AWS account name based on the account ID mapping in the configuration.
+This script exports comprehensive Route 53 DNS service information from AWS into an Excel file
+with multiple worksheets. The output includes hosted zones, DNS records, health checks, resolver
+endpoints, resolver rules, and query logging configurations.
 
-Route 53 is a global service, but some features (like Resolver) are regional.
+Features:
+- Hosted zones (public and private) with DNSSEC status
+- DNS records with routing policies and health checks
+- Health checks with endpoint monitoring details
+- Resolver endpoints (inbound/outbound) and VPC associations
+- Resolver rules for DNS forwarding
+- Query logging configurations
+- Comprehensive summary sheet
+
+Notes:
+- Route 53 is a global service (uses us-east-1 endpoint)
+- Route 53 Resolver is regional and requires multi-region scanning
 """
 
-import os
 import sys
-import json
 import datetime
-import time
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
 from pathlib import Path
+from typing import List, Dict, Any
 
 # Add path to import utils module
 try:
     import utils
 except ImportError:
     script_dir = Path(__file__).parent.absolute()
+
     if script_dir.name.lower() == 'scripts':
         sys.path.append(str(script_dir.parent))
     else:
@@ -42,678 +49,744 @@ except ImportError:
         print("ERROR: Could not import the utils module. Make sure utils.py is in the StratusScan directory.")
         sys.exit(1)
 
+# Initialize logging
+SCRIPT_START_TIME = datetime.datetime.now()
+utils.setup_logging("route53-export")
+utils.log_script_start("route53-export.py", "AWS Route 53 DNS Service Export Tool")
+
+
 def print_title():
     """Print the title and header of the script to the console."""
     print("====================================================================")
     print("                  AWS RESOURCE SCANNER                    ")
     print("====================================================================")
-    print("               AWS ROUTE 53 EXPORT TOOL")
+    print("           AWS ROUTE 53 DNS SERVICE EXPORT TOOL")
     print("====================================================================")
-    print("Version: v1.0.0                        Date: OCT-27-2025")
+    print("Version: v1.0.0                        Date: NOV-11-2025")
     print("Environment: AWS Commercial")
     print("====================================================================")
 
+    # Get the current AWS account ID
     try:
-        sts_client = boto3.client('sts')
+        sts_client = utils.get_boto3_client('sts')
         account_id = sts_client.get_caller_identity().get('Account')
         account_name = utils.get_account_name(account_id, default=account_id)
 
         print(f"Account ID: {account_id}")
         print(f"Account Name: {account_name}")
-    except NoCredentialsError:
-        print("\nERROR: No AWS credentials found.")
-        print("Please configure your AWS credentials using one of the following methods:")
-        print("  1. AWS CLI: aws configure")
-        print("  2. Environment variables: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY")
-        print("  3. IAM role (if running on EC2)")
-        sys.exit(1)
     except Exception as e:
         print("Could not determine account information.")
+        utils.log_error("Error getting account information", e)
         account_id = "unknown"
         account_name = "unknown"
 
     print("====================================================================")
     return account_id, account_name
 
-def check_and_install_dependencies():
-    """Check and install required dependencies if needed."""
-    required_packages = ['pandas', 'openpyxl', 'boto3']
 
-    for package in required_packages:
-        try:
-            __import__(package)
-            utils.log_info(f"[OK] {package} is already installed")
-        except ImportError:
-            response = input(f"{package} is not installed. Do you want to install it? (y/n): ")
-            if response.lower() == 'y':
+@utils.aws_error_handler("Collecting Route 53 hosted zones", default_return=[])
+def collect_hosted_zones() -> List[Dict[str, Any]]:
+    """
+    Collect Route 53 hosted zone information.
+
+    Returns:
+        list: List of dictionaries with hosted zone details
+    """
+    print("\n=== COLLECTING HOSTED ZONES ===")
+    utils.log_info("Route 53 is a global service - collecting from us-east-1")
+
+    zones = []
+    route53 = utils.get_boto3_client('route53', region_name='us-east-1')
+
+    # Use paginator to handle large numbers of zones
+    paginator = route53.get_paginator('list_hosted_zones')
+
+    total_count = 0
+    for page in paginator.paginate():
+        zone_list = page.get('HostedZones', [])
+        total_count += len(zone_list)
+
+        for zone in zone_list:
+            zone_id = zone.get('Id', '').split('/')[-1]  # Extract ID from ARN
+            zone_name = zone.get('Name', '')
+
+            print(f"  Processing hosted zone: {zone_name} ({zone_id})")
+
+            try:
+                # Get detailed zone information
+                zone_detail = route53.get_hosted_zone(Id=zone_id)
+                zone_info = zone_detail.get('HostedZone', {})
+                zone_config = zone_info.get('Config', {})
+
+                # Basic information
+                is_private = zone_config.get('PrivateZone', False)
+                zone_type = 'Private' if is_private else 'Public'
+                comment = zone_config.get('Comment', 'N/A')
+
+                # VPC associations (for private zones)
+                vpcs = zone_detail.get('VPCs', [])
+                vpc_list = []
+                for vpc in vpcs:
+                    vpc_id = vpc.get('VPCId', '')
+                    vpc_region = vpc.get('VPCRegion', '')
+                    vpc_list.append(f"{vpc_id} ({vpc_region})")
+                vpc_associations = ', '.join(vpc_list) if vpc_list else 'N/A'
+
+                # Resource record set count
+                record_count = zone_info.get('ResourceRecordSetCount', 0)
+
+                # Get DNSSEC status
+                dnssec_status = 'N/A'
                 try:
-                    import subprocess
-                    print(f"Installing {package}...")
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                    utils.log_success(f"Successfully installed {package}")
-                except Exception as e:
-                    utils.log_error(f"Error installing {package}", e)
-                    sys.exit(1)
+                    dnssec = route53.get_dnssec(HostedZoneId=zone_id)
+                    dnssec_status = dnssec.get('Status', {}).get('ServeSignature', 'DISABLED')
+                except Exception:
+                    # DNSSEC not configured
+                    dnssec_status = 'NOT_CONFIGURED'
+
+                # Get query logging config
+                query_logging = 'Disabled'
+                try:
+                    query_configs = route53.list_query_logging_configs(HostedZoneId=zone_id)
+                    configs = query_configs.get('QueryLoggingConfigs', [])
+                    if configs:
+                        query_logging = f"Enabled ({len(configs)} configs)"
+                except Exception:
+                    pass
+
+                # Tags
+                try:
+                    tags_response = route53.list_tags_for_resource(
+                        ResourceType='hostedzone',
+                        ResourceId=zone_id
+                    )
+                    tags_list = tags_response.get('ResourceTagSet', {}).get('Tags', [])
+                    tags = ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tags_list]) if tags_list else 'N/A'
+                except Exception:
+                    tags = 'N/A'
+
+                zones.append({
+                    'Zone ID': zone_id,
+                    'Zone Name': zone_name,
+                    'Type': zone_type,
+                    'Record Count': record_count,
+                    'VPC Associations': vpc_associations,
+                    'DNSSEC Status': dnssec_status,
+                    'Query Logging': query_logging,
+                    'Comment': comment,
+                    'Tags': tags
+                })
+
+            except Exception as e:
+                utils.log_error(f"Error getting details for zone {zone_id}", e)
+                zones.append({
+                    'Zone ID': zone_id,
+                    'Zone Name': zone_name,
+                    'Error': f'Could not retrieve full details: {str(e)}'
+                })
+
+    print(f"\nTotal hosted zones found: {total_count}")
+    utils.log_success(f"Total Route 53 hosted zones collected: {total_count}")
+
+    return zones
+
+
+@utils.aws_error_handler("Collecting DNS records", default_return=[])
+def collect_dns_records() -> List[Dict[str, Any]]:
+    """
+    Collect DNS record information from all hosted zones.
+
+    Returns:
+        list: List of dictionaries with DNS record details
+    """
+    print("\n=== COLLECTING DNS RECORDS ===")
+
+    records = []
+    route53 = utils.get_boto3_client('route53', region_name='us-east-1')
+
+    # Get all hosted zones
+    paginator = route53.get_paginator('list_hosted_zones')
+
+    for page in paginator.paginate():
+        zone_list = page.get('HostedZones', [])
+
+        for zone in zone_list:
+            zone_id = zone.get('Id', '').split('/')[-1]
+            zone_name = zone.get('Name', '')
+
+            print(f"  Processing records for zone: {zone_name}")
+
+            try:
+                # Use paginator for large record sets
+                record_paginator = route53.get_paginator('list_resource_record_sets')
+
+                for record_page in record_paginator.paginate(HostedZoneId=zone_id):
+                    record_sets = record_page.get('ResourceRecordSets', [])
+
+                    for record_set in record_sets:
+                        record_name = record_set.get('Name', '')
+                        record_type = record_set.get('Type', '')
+                        ttl = record_set.get('TTL', 'N/A')
+
+                        # Get record values
+                        resource_records = record_set.get('ResourceRecords', [])
+                        values = [r.get('Value', '') for r in resource_records]
+
+                        # Alias target
+                        alias_target = record_set.get('AliasTarget', {})
+                        if alias_target:
+                            alias_dns_name = alias_target.get('DNSName', '')
+                            alias_zone_id = alias_target.get('HostedZoneId', '')
+                            alias_evaluate_health = alias_target.get('EvaluateTargetHealth', False)
+                            values.append(f"ALIAS: {alias_dns_name} (Zone: {alias_zone_id}, EvaluateHealth: {alias_evaluate_health})")
+
+                        record_values = ', '.join(values) if values else 'N/A'
+
+                        # Routing policy
+                        set_identifier = record_set.get('SetIdentifier', '')
+                        weight = record_set.get('Weight', '')
+                        region = record_set.get('Region', '')
+                        failover = record_set.get('Failover', '')
+                        multi_value_answer = record_set.get('MultiValueAnswer', False)
+                        geo_location = record_set.get('GeoLocation', {})
+
+                        # Determine routing policy
+                        if weight != '':
+                            routing_policy = f"Weighted (Weight: {weight})"
+                        elif region:
+                            routing_policy = f"Latency ({region})"
+                        elif failover:
+                            routing_policy = f"Failover ({failover})"
+                        elif geo_location:
+                            continent = geo_location.get('ContinentCode', '')
+                            country = geo_location.get('CountryCode', '')
+                            subdivision = geo_location.get('SubdivisionCode', '')
+                            geo_str = continent or country or subdivision or 'Geolocation'
+                            routing_policy = f"Geolocation ({geo_str})"
+                        elif multi_value_answer:
+                            routing_policy = "Multivalue Answer"
+                        else:
+                            routing_policy = "Simple"
+
+                        # Health check
+                        health_check_id = record_set.get('HealthCheckId', 'N/A')
+
+                        records.append({
+                            'Zone Name': zone_name,
+                            'Record Name': record_name,
+                            'Type': record_type,
+                            'Routing Policy': routing_policy,
+                            'TTL': ttl,
+                            'Values/Alias Target': record_values,
+                            'Health Check ID': health_check_id,
+                            'Set Identifier': set_identifier if set_identifier else 'N/A'
+                        })
+
+            except Exception as e:
+                utils.log_error(f"Error collecting records for zone {zone_id}", e)
+
+    utils.log_success(f"Total DNS records collected: {len(records)}")
+    return records
+
+
+@utils.aws_error_handler("Collecting Route 53 health checks", default_return=[])
+def collect_health_checks() -> List[Dict[str, Any]]:
+    """
+    Collect Route 53 health check information.
+
+    Returns:
+        list: List of dictionaries with health check details
+    """
+    print("\n=== COLLECTING HEALTH CHECKS ===")
+
+    health_checks = []
+    route53 = utils.get_boto3_client('route53', region_name='us-east-1')
+
+    # Use paginator
+    paginator = route53.get_paginator('list_health_checks')
+
+    for page in paginator.paginate():
+        hc_list = page.get('HealthChecks', [])
+
+        for hc in hc_list:
+            hc_id = hc.get('Id', '')
+            hc_config = hc.get('HealthCheckConfig', {})
+
+            print(f"  Processing health check: {hc_id}")
+
+            # Health check type
+            hc_type = hc_config.get('Type', '')
+
+            # Endpoint details
+            ip_address = hc_config.get('IPAddress', 'N/A')
+            port = hc_config.get('Port', 'N/A')
+            resource_path = hc_config.get('ResourcePath', 'N/A')
+            fully_qualified_domain_name = hc_config.get('FullyQualifiedDomainName', 'N/A')
+
+            # For calculated health checks
+            child_health_checks = hc_config.get('ChildHealthChecks', [])
+            if child_health_checks:
+                endpoint = f"Calculated ({len(child_health_checks)} children)"
+            elif ip_address != 'N/A':
+                endpoint = ip_address
+            elif fully_qualified_domain_name != 'N/A':
+                endpoint = fully_qualified_domain_name
             else:
-                print(f"Cannot proceed without {package}. Exiting...")
-                sys.exit(1)
+                endpoint = 'N/A'
 
-def collect_hosted_zones_data():
+            # Request interval and failure threshold
+            request_interval = hc_config.get('RequestInterval', 30)
+            failure_threshold = hc_config.get('FailureThreshold', 3)
+
+            # Get health check status
+            try:
+                status_response = route53.get_health_check_status(HealthCheckId=hc_id)
+                checkers = status_response.get('HealthCheckObservations', [])
+                if checkers:
+                    # Check if all checkers report success
+                    all_healthy = all(c.get('StatusReport', {}).get('Status', '') == 'Success' for c in checkers)
+                    status = 'Healthy' if all_healthy else 'Unhealthy'
+                else:
+                    status = 'Unknown'
+            except Exception:
+                status = 'Unknown'
+
+            # CloudWatch alarm
+            alarm_name = hc_config.get('AlarmIdentifier', {}).get('Name', 'N/A')
+
+            # Tags
+            try:
+                tags_response = route53.list_tags_for_resource(
+                    ResourceType='healthcheck',
+                    ResourceId=hc_id
+                )
+                tags_list = tags_response.get('ResourceTagSet', {}).get('Tags', [])
+                tags = ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tags_list]) if tags_list else 'N/A'
+            except Exception:
+                tags = 'N/A'
+
+            health_checks.append({
+                'Health Check ID': hc_id,
+                'Type': hc_type,
+                'Endpoint': endpoint,
+                'Port': port,
+                'Resource Path': resource_path,
+                'Request Interval (s)': request_interval,
+                'Failure Threshold': failure_threshold,
+                'Status': status,
+                'Alarm Name': alarm_name,
+                'Tags': tags
+            })
+
+    utils.log_success(f"Total health checks collected: {len(health_checks)}")
+    return health_checks
+
+
+@utils.aws_error_handler("Collecting Route 53 Resolver endpoints", default_return=[])
+def collect_resolver_endpoints(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect all Route 53 hosted zones information.
-    Route 53 is a global service.
+    Collect Route 53 Resolver endpoint information across regions.
+
+    Args:
+        regions: List of AWS regions to scan
 
     Returns:
-        list: List of dictionaries with hosted zone information
+        list: List of dictionaries with resolver endpoint details
     """
-    print("\n=== COLLECTING HOSTED ZONES INFORMATION ===")
-    all_zones = []
+    print("\n=== COLLECTING RESOLVER ENDPOINTS ===")
+    utils.log_info("Route 53 Resolver is regional - scanning selected regions")
 
-    try:
-        # Route 53 is global, no region needed
-        route53_client = boto3.client('route53')
+    endpoints = []
 
-        # Get all hosted zones using paginator
-        paginator = route53_client.get_paginator('list_hosted_zones')
-        page_iterator = paginator.paginate()
+    for region in regions:
+        print(f"\n  Scanning region: {region}")
 
-        for page in page_iterator:
-            zones = page.get('HostedZones', [])
+        try:
+            resolver = utils.get_boto3_client('route53resolver', region_name=region)
 
-            for zone in zones:
-                try:
-                    zone_id = zone['Id'].split('/')[-1]  # Remove '/hostedzone/' prefix
-                    zone_name = zone['Name']
-                    print(f"  Processing hosted zone: {zone_name} ({zone_id})")
+            # Use paginator
+            paginator = resolver.get_paginator('list_resolver_endpoints')
 
-                    # Get zone details including resource record set count
-                    zone_details = route53_client.get_hosted_zone(Id=zone['Id'])
-                    hosted_zone = zone_details['HostedZone']
+            for page in paginator.paginate():
+                endpoint_list = page.get('ResolverEndpoints', [])
 
-                    # Get VPC associations for private zones
-                    vpc_associations = []
-                    if hosted_zone.get('Config', {}).get('PrivateZone', False):
-                        vpcs = zone_details.get('VPCs', [])
-                        for vpc in vpcs:
-                            vpc_associations.append(f"{vpc.get('VPCId', 'N/A')} ({vpc.get('VPCRegion', 'N/A')})")
+                for endpoint in endpoint_list:
+                    endpoint_id = endpoint.get('Id', '')
+                    name = endpoint.get('Name', 'N/A')
+                    direction = endpoint.get('Direction', '')
+                    status = endpoint.get('Status', '')
 
-                    vpc_assoc_str = ', '.join(vpc_associations) if vpc_associations else 'N/A'
+                    print(f"    Processing endpoint: {name} ({endpoint_id})")
 
-                    # Get tags
-                    tags = {}
+                    # IP addresses
+                    ip_address_count = endpoint.get('IpAddressCount', 0)
+
+                    # Get IP address details
                     try:
-                        tags_response = route53_client.list_tags_for_resource(
-                            ResourceType='hostedzone',
-                            ResourceId=zone_id
+                        ip_response = resolver.list_resolver_endpoint_ip_addresses(
+                            ResolverEndpointId=endpoint_id
                         )
-                        for tag in tags_response.get('Tags', []):
-                            tags[tag['Key']] = tag['Value']
-                    except Exception as e:
-                        utils.log_warning(f"Could not retrieve tags for zone {zone_id}: {e}")
+                        ip_addresses = ip_response.get('IpAddresses', [])
+                        ip_list = [f"{ip.get('Ip', '')} ({ip.get('SubnetId', '')})" for ip in ip_addresses]
+                        ip_details = ', '.join(ip_list) if ip_list else 'N/A'
+                    except Exception:
+                        ip_details = 'N/A'
 
-                    # Compile zone data
-                    zone_data = {
-                        'Hosted Zone ID': zone_id,
-                        'Name': zone_name,
-                        'Type': 'Private' if hosted_zone.get('Config', {}).get('PrivateZone', False) else 'Public',
-                        'Resource Record Set Count': hosted_zone.get('ResourceRecordSetCount', 0),
-                        'Caller Reference': zone.get('CallerReference', 'N/A'),
-                        'VPC Associations': vpc_assoc_str,
-                        'Comment': hosted_zone.get('Config', {}).get('Comment', 'N/A'),
-                        'Tags': json.dumps(tags) if tags else 'N/A'
-                    }
+                    # VPC and security groups
+                    vpc_id = endpoint.get('HostVPCId', 'N/A')
+                    security_group_ids = endpoint.get('SecurityGroupIds', [])
+                    security_groups = ', '.join(security_group_ids) if security_group_ids else 'N/A'
 
-                    all_zones.append(zone_data)
-                    time.sleep(0.1)  # Rate limiting
+                    endpoints.append({
+                        'Region': region,
+                        'Endpoint ID': endpoint_id,
+                        'Name': name,
+                        'Direction': direction,
+                        'Status': status,
+                        'IP Address Count': ip_address_count,
+                        'IP Addresses': ip_details,
+                        'VPC ID': vpc_id,
+                        'Security Group IDs': security_groups
+                    })
 
-                except Exception as e:
-                    utils.log_error(f"Error processing hosted zone {zone.get('Name', 'unknown')}", e)
-                    continue
+        except Exception as e:
+            utils.log_error(f"Error collecting resolver endpoints in {region}", e)
 
-        utils.log_success(f"Total hosted zones collected: {len(all_zones)}")
+    utils.log_success(f"Total resolver endpoints collected: {len(endpoints)}")
+    return endpoints
 
-    except Exception as e:
-        utils.log_error("Error collecting hosted zones", e)
 
-    return all_zones
-
-def collect_record_sets_data():
+@utils.aws_error_handler("Collecting Route 53 Resolver rules", default_return=[])
+def collect_resolver_rules(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect all DNS record sets from all hosted zones.
-
-    Returns:
-        list: List of dictionaries with DNS record information
-    """
-    print("\n=== COLLECTING DNS RECORD SETS INFORMATION ===")
-    all_records = []
-
-    try:
-        route53_client = boto3.client('route53')
-
-        # Get all hosted zones first
-        paginator = route53_client.get_paginator('list_hosted_zones')
-        page_iterator = paginator.paginate()
-
-        for page in page_iterator:
-            zones = page.get('HostedZones', [])
-
-            for zone in zones:
-                zone_id = zone['Id']
-                zone_name = zone['Name']
-                print(f"  Collecting records for zone: {zone_name}")
-
-                try:
-                    # Get all record sets for this zone
-                    record_paginator = route53_client.get_paginator('list_resource_record_sets')
-                    record_iterator = record_paginator.paginate(HostedZoneId=zone_id)
-
-                    for record_page in record_iterator:
-                        record_sets = record_page.get('ResourceRecordSets', [])
-
-                        for record in record_sets:
-                            try:
-                                record_name = record.get('Name', 'N/A')
-                                record_type = record.get('Type', 'N/A')
-
-                                # Handle alias records
-                                if record.get('AliasTarget'):
-                                    alias_target = record['AliasTarget']
-                                    record_value = f"ALIAS -> {alias_target.get('DNSName', 'N/A')}"
-                                    alias_zone_id = alias_target.get('HostedZoneId', 'N/A')
-                                    evaluate_health = alias_target.get('EvaluateTargetHealth', False)
-                                    ttl = 'N/A (Alias)'
-                                else:
-                                    # Handle regular records
-                                    resource_records = record.get('ResourceRecords', [])
-                                    values = [rr.get('Value', '') for rr in resource_records]
-                                    record_value = ', '.join(values) if values else 'N/A'
-                                    # Truncate very long values (like TXT records)
-                                    if len(record_value) > 500:
-                                        record_value = record_value[:500] + '... (truncated)'
-                                    alias_zone_id = 'N/A'
-                                    evaluate_health = 'N/A'
-                                    ttl = record.get('TTL', 'N/A')
-
-                                # Routing policy information
-                                routing_policy = 'Simple'
-                                routing_details = ''
-
-                                if record.get('Weight') is not None:
-                                    routing_policy = 'Weighted'
-                                    routing_details = f"Weight: {record['Weight']}, SetID: {record.get('SetIdentifier', 'N/A')}"
-                                elif record.get('Region'):
-                                    routing_policy = 'Latency'
-                                    routing_details = f"Region: {record['Region']}, SetID: {record.get('SetIdentifier', 'N/A')}"
-                                elif record.get('Failover'):
-                                    routing_policy = 'Failover'
-                                    routing_details = f"Failover: {record['Failover']}, SetID: {record.get('SetIdentifier', 'N/A')}"
-                                elif record.get('GeoLocation'):
-                                    routing_policy = 'Geolocation'
-                                    geo = record['GeoLocation']
-                                    routing_details = f"Geo: {geo}, SetID: {record.get('SetIdentifier', 'N/A')}"
-                                elif record.get('MultiValueAnswer'):
-                                    routing_policy = 'Multivalue Answer'
-                                    routing_details = f"SetID: {record.get('SetIdentifier', 'N/A')}"
-
-                                # Health check
-                                health_check_id = record.get('HealthCheckId', 'N/A')
-
-                                record_data = {
-                                    'Hosted Zone': zone_name,
-                                    'Hosted Zone ID': zone_id.split('/')[-1],
-                                    'Record Name': record_name,
-                                    'Type': record_type,
-                                    'TTL': ttl,
-                                    'Value': record_value,
-                                    'Routing Policy': routing_policy,
-                                    'Routing Details': routing_details if routing_details else 'N/A',
-                                    'Alias Target Zone ID': alias_zone_id,
-                                    'Evaluate Target Health': evaluate_health,
-                                    'Health Check ID': health_check_id
-                                }
-
-                                all_records.append(record_data)
-
-                            except Exception as e:
-                                utils.log_error(f"Error processing record in zone {zone_name}", e)
-                                continue
-
-                    time.sleep(0.2)  # Rate limiting between zones
-
-                except Exception as e:
-                    utils.log_error(f"Error collecting records for zone {zone_name}", e)
-                    continue
-
-        utils.log_success(f"Total DNS records collected: {len(all_records)}")
-
-    except Exception as e:
-        utils.log_error("Error collecting DNS records", e)
-
-    return all_records
-
-def collect_resolver_endpoints_data(regions):
-    """
-    Collect Route 53 Resolver endpoints information from specified regions.
+    Collect Route 53 Resolver rule information across regions.
 
     Args:
         regions: List of AWS regions to scan
 
     Returns:
-        list: List of dictionaries with resolver endpoint information
+        list: List of dictionaries with resolver rule details
     """
-    print("\n=== COLLECTING RESOLVER ENDPOINTS INFORMATION ===")
-    all_endpoints = []
+    print("\n=== COLLECTING RESOLVER RULES ===")
+
+    rules = []
 
     for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
-
-        print(f"  Scanning region: {region}")
+        print(f"\n  Scanning region: {region}")
 
         try:
-            route53resolver_client = boto3.client('route53resolver', region_name=region)
+            resolver = utils.get_boto3_client('route53resolver', region_name=region)
 
-            # Get all resolver endpoints
-            paginator = route53resolver_client.get_paginator('list_resolver_endpoints')
-            page_iterator = paginator.paginate()
+            # Use paginator
+            paginator = resolver.get_paginator('list_resolver_rules')
 
-            for page in page_iterator:
-                endpoints = page.get('ResolverEndpoints', [])
+            for page in paginator.paginate():
+                rule_list = page.get('ResolverRules', [])
 
-                for endpoint in endpoints:
+                for rule in rule_list:
+                    rule_id = rule.get('Id', '')
+                    name = rule.get('Name', 'N/A')
+                    rule_type = rule.get('RuleType', '')
+                    domain_name = rule.get('DomainName', '')
+                    status = rule.get('Status', '')
+
+                    print(f"    Processing rule: {name} ({domain_name})")
+
+                    # Target IPs (for FORWARD rules)
+                    target_ips = rule.get('TargetIps', [])
+                    if target_ips:
+                        target_list = [f"{t.get('Ip', '')}:{t.get('Port', 53)}" for t in target_ips]
+                        targets = ', '.join(target_list)
+                    else:
+                        targets = 'N/A'
+
+                    # Resolver endpoint ID
+                    resolver_endpoint_id = rule.get('ResolverEndpointId', 'N/A')
+
+                    # Get VPC associations
                     try:
-                        endpoint_id = endpoint.get('Id', 'N/A')
-                        print(f"    Processing endpoint: {endpoint_id}")
+                        assoc_response = resolver.list_resolver_rule_associations(
+                            Filters=[{'Name': 'ResolverRuleId', 'Values': [rule_id]}]
+                        )
+                        associations = assoc_response.get('ResolverRuleAssociations', [])
+                        vpc_ids = [assoc.get('VPCId', '') for assoc in associations]
+                        associated_vpcs = ', '.join(vpc_ids) if vpc_ids else 'N/A'
+                    except Exception:
+                        associated_vpcs = 'N/A'
 
-                        # Get IP addresses for this endpoint
-                        ip_addresses = []
-                        try:
-                            ip_paginator = route53resolver_client.get_paginator('list_resolver_endpoint_ip_addresses')
-                            ip_iterator = ip_paginator.paginate(ResolverEndpointId=endpoint_id)
-
-                            for ip_page in ip_iterator:
-                                ip_addrs = ip_page.get('IpAddresses', [])
-                                for ip_addr in ip_addrs:
-                                    ip_addresses.append(
-                                        f"{ip_addr.get('Ip', 'N/A')} (Subnet: {ip_addr.get('SubnetId', 'N/A')})"
-                                    )
-                        except Exception as e:
-                            utils.log_warning(f"Could not retrieve IP addresses for endpoint {endpoint_id}: {e}")
-
-                        endpoint_data = {
-                            'Region': region,
-                            'Resolver Endpoint ID': endpoint_id,
-                            'Name': endpoint.get('Name', 'N/A'),
-                            'Direction': endpoint.get('Direction', 'N/A'),
-                            'Status': endpoint.get('Status', 'N/A'),
-                            'IP Address Count': endpoint.get('IpAddressCount', 0),
-                            'IP Addresses': ', '.join(ip_addresses) if ip_addresses else 'N/A',
-                            'VPC ID': endpoint.get('HostVPCId', 'N/A'),
-                            'Security Group IDs': ', '.join(endpoint.get('SecurityGroupIds', [])),
-                            'Creation Time': str(endpoint.get('CreationTime', 'N/A')),
-                            'Modification Time': str(endpoint.get('ModificationTime', 'N/A'))
-                        }
-
-                        all_endpoints.append(endpoint_data)
-                        time.sleep(0.1)
-
-                    except Exception as e:
-                        utils.log_error(f"Error processing resolver endpoint {endpoint.get('Id', 'unknown')}", e)
-                        continue
-
-            time.sleep(0.3)  # Rate limiting between regions
+                    rules.append({
+                        'Region': region,
+                        'Rule ID': rule_id,
+                        'Name': name,
+                        'Type': rule_type,
+                        'Domain Name': domain_name,
+                        'Status': status,
+                        'Target IPs': targets,
+                        'Resolver Endpoint ID': resolver_endpoint_id,
+                        'Associated VPCs': associated_vpcs
+                    })
 
         except Exception as e:
-            utils.log_error(f"Error collecting resolver endpoints in region {region}", e)
-            continue
+            utils.log_error(f"Error collecting resolver rules in {region}", e)
 
-    utils.log_success(f"Total resolver endpoints collected: {len(all_endpoints)}")
-    return all_endpoints
+    utils.log_success(f"Total resolver rules collected: {len(rules)}")
+    return rules
 
-def collect_resolver_rules_data(regions):
+
+@utils.aws_error_handler("Collecting query logging configs", default_return=[])
+def collect_query_logging_configs() -> List[Dict[str, Any]]:
     """
-    Collect Route 53 Resolver rules information from specified regions.
-
-    Args:
-        regions: List of AWS regions to scan
+    Collect Route 53 query logging configuration information.
 
     Returns:
-        list: List of dictionaries with resolver rule information
+        list: List of dictionaries with query logging config details
     """
-    print("\n=== COLLECTING RESOLVER RULES INFORMATION ===")
-    all_rules = []
+    print("\n=== COLLECTING QUERY LOGGING CONFIGS ===")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
+    configs = []
+    route53 = utils.get_boto3_client('route53', region_name='us-east-1')
 
-        print(f"  Scanning region: {region}")
+    # Use paginator
+    paginator = route53.get_paginator('list_query_logging_configs')
 
-        try:
-            route53resolver_client = boto3.client('route53resolver', region_name=region)
+    for page in paginator.paginate():
+        config_list = page.get('QueryLoggingConfigs', [])
 
-            # Get all resolver rules
-            paginator = route53resolver_client.get_paginator('list_resolver_rules')
-            page_iterator = paginator.paginate()
+        for config in config_list:
+            config_id = config.get('Id', '')
+            hosted_zone_id = config.get('HostedZoneId', '').split('/')[-1]
+            destination_arn = config.get('CloudWatchLogsLogGroupArn', '')
 
-            for page in page_iterator:
-                rules = page.get('ResolverRules', [])
+            print(f"  Processing query logging config: {config_id}")
 
-                for rule in rules:
-                    try:
-                        rule_id = rule.get('Id', 'N/A')
-                        print(f"    Processing rule: {rule_id}")
+            # Parse destination type from ARN
+            if 'logs' in destination_arn:
+                destination_type = 'CloudWatch Logs'
+            elif 's3' in destination_arn:
+                destination_type = 'S3'
+            elif 'firehose' in destination_arn:
+                destination_type = 'Kinesis Firehose'
+            else:
+                destination_type = 'Unknown'
 
-                        # Get target IPs for FORWARD rules
-                        target_ips = []
-                        if rule.get('RuleType') == 'FORWARD':
-                            targets = rule.get('TargetIps', [])
-                            for target in targets:
-                                target_ips.append(f"{target.get('Ip', 'N/A')}:{target.get('Port', '53')}")
+            # Get zone name
+            try:
+                zone = route53.get_hosted_zone(Id=hosted_zone_id)
+                zone_name = zone.get('HostedZone', {}).get('Name', hosted_zone_id)
+            except Exception:
+                zone_name = hosted_zone_id
 
-                        rule_data = {
-                            'Region': region,
-                            'Resolver Rule ID': rule_id,
-                            'Name': rule.get('Name', 'N/A'),
-                            'Domain Name': rule.get('DomainName', 'N/A'),
-                            'Rule Type': rule.get('RuleType', 'N/A'),
-                            'Target IPs': ', '.join(target_ips) if target_ips else 'N/A',
-                            'Resolver Endpoint ID': rule.get('ResolverEndpointId', 'N/A'),
-                            'Status': rule.get('Status', 'N/A'),
-                            'Owner ID': rule.get('OwnerId', 'N/A'),
-                            'Share Status': rule.get('ShareStatus', 'N/A'),
-                            'Creation Time': str(rule.get('CreationTime', 'N/A')),
-                            'Modification Time': str(rule.get('ModificationTime', 'N/A'))
-                        }
+            configs.append({
+                'Config ID': config_id,
+                'Hosted Zone ID': hosted_zone_id,
+                'Zone Name': zone_name,
+                'Destination Type': destination_type,
+                'Destination ARN': destination_arn
+            })
 
-                        all_rules.append(rule_data)
-                        time.sleep(0.1)
+    utils.log_success(f"Total query logging configs collected: {len(configs)}")
+    return configs
 
-                    except Exception as e:
-                        utils.log_error(f"Error processing resolver rule {rule.get('Id', 'unknown')}", e)
-                        continue
 
-            time.sleep(0.3)  # Rate limiting between regions
-
-        except Exception as e:
-            utils.log_error(f"Error collecting resolver rules in region {region}", e)
-            continue
-
-    utils.log_success(f"Total resolver rules collected: {len(all_rules)}")
-    return all_rules
-
-def collect_resolver_rule_associations_data(regions):
+def generate_summary(zones: List[Dict], records: List[Dict], health_checks: List[Dict],
+                     endpoints: List[Dict], rules: List[Dict], query_configs: List[Dict]) -> List[Dict[str, Any]]:
     """
-    Collect Route 53 Resolver rule associations with VPCs.
+    Generate summary statistics for Route 53 resources.
 
     Args:
-        regions: List of AWS regions to scan
+        zones: List of hosted zones
+        records: List of DNS records
+        health_checks: List of health checks
+        endpoints: List of resolver endpoints
+        rules: List of resolver rules
+        query_configs: List of query logging configs
 
     Returns:
-        list: List of dictionaries with rule association information
+        list: List of dictionaries with summary data
     """
-    print("\n=== COLLECTING RESOLVER RULE ASSOCIATIONS ===")
-    all_associations = []
+    print("\n=== GENERATING SUMMARY ===")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
+    summary = []
 
-        print(f"  Scanning region: {region}")
+    # Hosted zones summary
+    public_zones = sum(1 for z in zones if z.get('Type') == 'Public')
+    private_zones = sum(1 for z in zones if z.get('Type') == 'Private')
 
-        try:
-            route53resolver_client = boto3.client('route53resolver', region_name=region)
+    summary.append({
+        'Category': 'Hosted Zones',
+        'Subcategory': 'Public Zones',
+        'Count': public_zones
+    })
+    summary.append({
+        'Category': 'Hosted Zones',
+        'Subcategory': 'Private Zones',
+        'Count': private_zones
+    })
+    summary.append({
+        'Category': 'Hosted Zones',
+        'Subcategory': 'Total Zones',
+        'Count': len(zones)
+    })
 
-            # Get all rule associations
-            paginator = route53resolver_client.get_paginator('list_resolver_rule_associations')
-            page_iterator = paginator.paginate()
+    # DNS records by type
+    if records:
+        import pandas as pd
+        records_df = pd.DataFrame(records)
+        record_types = records_df['Type'].value_counts().to_dict()
 
-            for page in page_iterator:
-                associations = page.get('ResolverRuleAssociations', [])
+        for record_type, count in sorted(record_types.items()):
+            summary.append({
+                'Category': 'DNS Records',
+                'Subcategory': f'{record_type} Records',
+                'Count': count
+            })
 
-                for assoc in associations:
-                    try:
-                        assoc_data = {
-                            'Region': region,
-                            'Association ID': assoc.get('Id', 'N/A'),
-                            'VPC ID': assoc.get('VPCId', 'N/A'),
-                            'Resolver Rule ID': assoc.get('ResolverRuleId', 'N/A'),
-                            'Name': assoc.get('Name', 'N/A'),
-                            'Status': assoc.get('Status', 'N/A')
-                        }
+        summary.append({
+            'Category': 'DNS Records',
+            'Subcategory': 'Total Records',
+            'Count': len(records)
+        })
 
-                        all_associations.append(assoc_data)
+    # Health checks by status
+    if health_checks:
+        import pandas as pd
+        hc_df = pd.DataFrame(health_checks)
+        hc_statuses = hc_df['Status'].value_counts().to_dict()
 
-                    except Exception as e:
-                        utils.log_error(f"Error processing rule association", e)
-                        continue
+        for status, count in sorted(hc_statuses.items()):
+            summary.append({
+                'Category': 'Health Checks',
+                'Subcategory': f'{status} Health Checks',
+                'Count': count
+            })
 
-            time.sleep(0.3)
+        summary.append({
+            'Category': 'Health Checks',
+            'Subcategory': 'Total Health Checks',
+            'Count': len(health_checks)
+        })
 
-        except Exception as e:
-            utils.log_error(f"Error collecting rule associations in region {region}", e)
-            continue
+    # Resolver endpoints
+    summary.append({
+        'Category': 'Resolver',
+        'Subcategory': 'Resolver Endpoints',
+        'Count': len(endpoints)
+    })
 
-    utils.log_success(f"Total rule associations collected: {len(all_associations)}")
-    return all_associations
+    # Resolver rules
+    summary.append({
+        'Category': 'Resolver',
+        'Subcategory': 'Resolver Rules',
+        'Count': len(rules)
+    })
 
-def collect_query_logging_configs_data(regions):
+    # Query logging configs
+    summary.append({
+        'Category': 'Logging',
+        'Subcategory': 'Query Logging Configs',
+        'Count': len(query_configs)
+    })
+
+    utils.log_success("Summary generated successfully")
+    return summary
+
+
+def export_route53_data(account_id: str, account_name: str, regions: List[str]):
     """
-    Collect Route 53 query logging configurations.
-
-    Args:
-        regions: List of AWS regions to scan
-
-    Returns:
-        list: List of dictionaries with query logging configuration information
-    """
-    print("\n=== COLLECTING QUERY LOGGING CONFIGURATIONS ===")
-    all_configs = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"  Scanning region: {region}")
-
-        try:
-            route53resolver_client = boto3.client('route53resolver', region_name=region)
-
-            # Get all query logging configs
-            paginator = route53resolver_client.get_paginator('list_resolver_query_log_configs')
-            page_iterator = paginator.paginate()
-
-            for page in page_iterator:
-                configs = page.get('ResolverQueryLogConfigs', [])
-
-                for config in configs:
-                    try:
-                        # Get associated hosted zones
-                        associations = []
-                        try:
-                            assoc_paginator = route53resolver_client.get_paginator('list_resolver_query_log_config_associations')
-                            assoc_iterator = assoc_paginator.paginate(
-                                Filters=[
-                                    {
-                                        'Name': 'ResolverQueryLogConfigId',
-                                        'Values': [config['Id']]
-                                    }
-                                ]
-                            )
-
-                            for assoc_page in assoc_iterator:
-                                assocs = assoc_page.get('ResolverQueryLogConfigAssociations', [])
-                                for assoc in assocs:
-                                    associations.append(assoc.get('ResourceId', 'N/A'))
-                        except Exception as e:
-                            utils.log_warning(f"Could not retrieve associations for query log config: {e}")
-
-                        config_data = {
-                            'Region': region,
-                            'Query Log Config ID': config.get('Id', 'N/A'),
-                            'Name': config.get('Name', 'N/A'),
-                            'Destination ARN': config.get('DestinationArn', 'N/A'),
-                            'Associated Resources': ', '.join(associations) if associations else 'N/A',
-                            'Status': config.get('Status', 'N/A'),
-                            'Owner ID': config.get('OwnerId', 'N/A'),
-                            'Share Status': config.get('ShareStatus', 'N/A'),
-                            'Creation Time': str(config.get('CreationTime', 'N/A'))
-                        }
-
-                        all_configs.append(config_data)
-                        time.sleep(0.1)
-
-                    except Exception as e:
-                        utils.log_error(f"Error processing query logging config", e)
-                        continue
-
-            time.sleep(0.3)
-
-        except Exception as e:
-            utils.log_error(f"Error collecting query logging configs in region {region}", e)
-            continue
-
-    utils.log_success(f"Total query logging configs collected: {len(all_configs)}")
-    return all_configs
-
-def export_route53_info(account_id, account_name):
-    """
-    Export Route 53 information to an Excel file.
+    Export Route 53 DNS service information to an Excel file.
 
     Args:
         account_id: The AWS account ID
         account_name: The AWS account name
+        regions: List of AWS regions to scan for Resolver resources
     """
-    # Import pandas after dependency check
+    print("\n" + "=" * 60)
+    print("Starting Route 53 export process...")
+    print("=" * 60)
+
+    utils.log_info("Beginning Route 53 data collection")
+
+    # Import pandas for DataFrame handling
     import pandas as pd
 
-    # Ask user which regions to scan for regional features (Resolver)
-    print("\n" + "=" * 60)
-    print("AWS Region Selection for Route 53 Resolver features:")
-    print("(Note: Hosted zones and DNS records are global)")
-    print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1")
-    region_input = input("Would you like all AWS regions (type \"all\") or a specific region (ex. \"us-east-1\")? ").strip().lower()
+    # Dictionary to hold all DataFrames for export
+    data_frames = {}
 
-    # Get available regions
-    all_available_regions = utils.get_available_aws_regions()
-    if not all_available_regions:
-        all_available_regions = utils.get_aws_regions()
+    # STEP 1: Collect hosted zones
+    zones = collect_hosted_zones()
+    if zones:
+        data_frames['Hosted Zones'] = pd.DataFrame(zones)
 
-    # Determine regions to scan
-    if region_input == "all":
-        regions = all_available_regions
-        region_text = "all AWS regions"
-    else:
-        if utils.validate_aws_region(region_input):
-            regions = [region_input]
-            region_text = f"AWS region {region_input}"
-        else:
-            utils.log_warning(f"'{region_input}' is not a valid AWS region. Using all AWS regions.")
-            regions = all_available_regions
-            region_text = "all AWS regions"
+    # STEP 2: Collect DNS records
+    records = collect_dns_records()
+    if records:
+        data_frames['DNS Records'] = pd.DataFrame(records)
 
-    # Create filename
+    # STEP 3: Collect health checks
+    health_checks = collect_health_checks()
+    if health_checks:
+        data_frames['Health Checks'] = pd.DataFrame(health_checks)
+
+    # STEP 4: Collect resolver endpoints (regional)
+    endpoints = collect_resolver_endpoints(regions)
+    if endpoints:
+        data_frames['Resolver Endpoints'] = pd.DataFrame(endpoints)
+
+    # STEP 5: Collect resolver rules (regional)
+    rules = collect_resolver_rules(regions)
+    if rules:
+        data_frames['Resolver Rules'] = pd.DataFrame(rules)
+
+    # STEP 6: Collect query logging configs
+    query_configs = collect_query_logging_configs()
+    if query_configs:
+        data_frames['Query Logging Configs'] = pd.DataFrame(query_configs)
+
+    # STEP 7: Generate summary
+    summary = generate_summary(zones, records, health_checks, endpoints, rules, query_configs)
+    if summary:
+        data_frames['Summary'] = pd.DataFrame(summary)
+
+    # Check if we have any data
+    if not data_frames:
+        utils.log_warning("No Route 53 data was collected. Nothing to export.")
+        print("\nNo Route 53 resources found in this account.")
+        return
+
+    # STEP 8: Prepare all DataFrames for export
+    for sheet_name in data_frames:
+        data_frames[sheet_name] = utils.prepare_dataframe_for_export(data_frames[sheet_name])
+
+    # STEP 9: Create filename and export
     current_date = datetime.datetime.now().strftime("%m.%d.%Y")
-    region_suffix = "" if region_input == "all" else f"-{region_input}"
-
     final_excel_file = utils.create_export_filename(
         account_name,
-        "route53",
-        region_suffix,
+        'route53',
+        'dns',
         current_date
     )
 
-    print(f"\nStarting AWS Route 53 export process...")
-    print("This may take some time depending on the number of resources...")
-
-    utils.log_info(f"Processing {len(regions)} AWS regions for regional features: {', '.join(regions)}")
-
-    # Dictionary to hold all DataFrames
-    data_frames = {}
-
-    # STEP 1: Collect Hosted Zones (Global)
-    hosted_zones_data = collect_hosted_zones_data()
-    if hosted_zones_data:
-        data_frames['Hosted Zones'] = pd.DataFrame(hosted_zones_data)
-
-    # STEP 2: Collect DNS Record Sets (Global)
-    record_sets_data = collect_record_sets_data()
-    if record_sets_data:
-        data_frames['DNS Records'] = pd.DataFrame(record_sets_data)
-
-    # STEP 3: Collect Resolver Endpoints (Regional)
-    resolver_endpoints_data = collect_resolver_endpoints_data(regions)
-    if resolver_endpoints_data:
-        data_frames['Resolver Endpoints'] = pd.DataFrame(resolver_endpoints_data)
-
-    # STEP 4: Collect Resolver Rules (Regional)
-    resolver_rules_data = collect_resolver_rules_data(regions)
-    if resolver_rules_data:
-        data_frames['Resolver Rules'] = pd.DataFrame(resolver_rules_data)
-
-    # STEP 5: Collect Resolver Rule Associations (Regional)
-    rule_associations_data = collect_resolver_rule_associations_data(regions)
-    if rule_associations_data:
-        data_frames['Resolver Rule Associations'] = pd.DataFrame(rule_associations_data)
-
-    # STEP 6: Collect Query Logging Configurations (Regional)
-    query_logging_data = collect_query_logging_configs_data(regions)
-    if query_logging_data:
-        data_frames['Query Logging Configs'] = pd.DataFrame(query_logging_data)
-
-    # STEP 7: Create Summary
-    summary_data = []
-    summary_data.append({
-        'Resource Type': 'Hosted Zones',
-        'Count': len(hosted_zones_data)
-    })
-    summary_data.append({
-        'Resource Type': 'DNS Records',
-        'Count': len(record_sets_data)
-    })
-    summary_data.append({
-        'Resource Type': 'Resolver Endpoints',
-        'Count': len(resolver_endpoints_data)
-    })
-    summary_data.append({
-        'Resource Type': 'Resolver Rules',
-        'Count': len(resolver_rules_data)
-    })
-    summary_data.append({
-        'Resource Type': 'Resolver Rule Associations',
-        'Count': len(rule_associations_data)
-    })
-    summary_data.append({
-        'Resource Type': 'Query Logging Configs',
-        'Count': len(query_logging_data)
-    })
-
-    if summary_data:
-        data_frames['Summary'] = pd.DataFrame(summary_data)
-
-    # STEP 8: Save the Excel file
-    if not data_frames:
-        utils.log_warning("No data was collected. Nothing to export.")
-        return
-
+    # Save using utils module for consistent formatting
     try:
         output_path = utils.save_multiple_dataframes_to_excel(data_frames, final_excel_file)
 
         if output_path:
-            utils.log_success("AWS Route 53 data exported successfully!")
+            utils.log_success("Route 53 data exported successfully!")
             utils.log_info(f"File location: {output_path}")
-            utils.log_info(f"Export contains data from {len(regions)} AWS region(s) for regional features")
 
             # Summary of exported data
+            print("\n" + "=" * 60)
+            print("EXPORT SUMMARY")
+            print("=" * 60)
             for sheet_name, df in data_frames.items():
                 utils.log_info(f"  - {sheet_name}: {len(df)} records")
+                print(f"  - {sheet_name}: {len(df)} records")
         else:
             utils.log_error("Error creating Excel file. Please check the logs.")
 
     except Exception as e:
-        utils.log_error(f"Error creating Excel file", e)
+        utils.log_error("Error creating Excel file", e)
+
 
 def main():
     """Main function to execute the script."""
@@ -722,7 +795,8 @@ def main():
         account_id, account_name = print_title()
 
         # Check and install dependencies
-        check_and_install_dependencies()
+        if not utils.ensure_dependencies('pandas', 'openpyxl'):
+            sys.exit(1)
 
         # Check if account name is unknown
         if account_name == "unknown":
@@ -731,17 +805,28 @@ def main():
                 print("Exiting script...")
                 sys.exit(0)
 
-        # Export Route 53 information
-        export_route53_info(account_id, account_name)
+        # Prompt for regions (for Resolver resources)
+        print("\nRoute 53 is a global service, but Resolver is regional.")
+        regions = utils.prompt_region_selection(
+            prompt_message="Select AWS region(s) for Route 53 Resolver scan:",
+            allow_all=True
+        )
 
-        print("\nAWS Route 53 data export script execution completed.")
+        # Export Route 53 data
+        export_route53_data(account_id, account_name, regions)
+
+        print("\nRoute 53 export script execution completed.")
 
     except KeyboardInterrupt:
         print("\nOperation cancelled by user.")
+        utils.log_info("Script cancelled by user")
         sys.exit(1)
     except Exception as e:
         utils.log_error("An unexpected error occurred", e)
         sys.exit(1)
+    finally:
+        utils.log_script_end("route53-export.py", SCRIPT_START_TIME)
+
 
 if __name__ == "__main__":
     main()

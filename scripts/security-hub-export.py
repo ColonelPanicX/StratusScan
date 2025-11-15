@@ -87,6 +87,7 @@ def check_dependencies():
 
     return True
 
+@utils.aws_error_handler("Getting account information", default_return=("Unknown", "Unknown-AWS-Account"))
 def get_account_info():
     """
     Get the current AWS account ID and name with AWS validation.
@@ -94,18 +95,14 @@ def get_account_info():
     Returns:
         tuple: (account_id, account_name)
     """
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
+    sts = utils.get_boto3_client('sts')
+    account_id = sts.get_caller_identity()['Account']
 
-        # Validate AWS environment
-        caller_arn = sts.get_caller_identity()['Arn']
-        account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
+    # Validate AWS environment
+    caller_arn = sts.get_caller_identity()['Arn']
+    account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
 
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
+    return account_id, account_name
 
 def print_title():
     """
@@ -157,7 +154,7 @@ def get_available_regions():
 
         try:
             # Test Security Hub availability
-            client = boto3.client('securityhub', region_name=region)
+            client = utils.get_boto3_client('securityhub', region_name=region)
             client.describe_hub()
             available_regions.append(region)
         except ClientError as e:
@@ -182,8 +179,9 @@ def collect_security_hub_findings(region):
     """
     findings_data = []
 
+    # Keep try-except for business logic: InvalidAccessException means Security Hub not enabled
     try:
-        client = boto3.client('securityhub', region_name=region)
+        client = utils.get_boto3_client('securityhub', region_name=region)
 
         # Check if Security Hub is enabled
         try:
@@ -289,9 +287,6 @@ def collect_security_hub_findings(region):
                 }
 
                 findings_data.append(finding_info)
-
-                # Small delay to avoid API throttling
-                time.sleep(0.05)
 
     except Exception as e:
         utils.log_error(f"Error collecting Security Hub findings from {region}", e)
@@ -560,7 +555,7 @@ def main():
 
         try:
             # Test AWS credentials
-            sts = boto3.client('sts')
+            sts = utils.get_boto3_client('sts')
             sts.get_caller_identity()
             utils.log_success("AWS credentials validated")
 

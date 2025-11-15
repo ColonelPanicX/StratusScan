@@ -121,6 +121,7 @@ def check_dependencies():
 
     return True
 
+@utils.aws_error_handler("Getting account information", default_return=("Unknown", "Unknown-AWS-Account"))
 def get_account_info():
     """
     Get the current AWS account ID and name with AWS validation.
@@ -128,18 +129,14 @@ def get_account_info():
     Returns:
         tuple: (account_id, account_name)
     """
-    try:
-        sts = boto3.client('sts')
-        account_id = sts.get_caller_identity()['Account']
+    sts = utils.get_boto3_client('sts')
+    account_id = sts.get_caller_identity()['Account']
 
-        # Validate AWS environment
-        caller_arn = sts.get_caller_identity()['Arn']
-        account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
+    # Validate AWS environment
+    caller_arn = sts.get_caller_identity()['Arn']
+    account_name = utils.get_account_name(account_id, default=f"AWS-ACCOUNT-{account_id}")
 
-        return account_id, account_name
-    except Exception as e:
-        utils.log_error("Error getting account information", e)
-        return "Unknown", "Unknown-AWS-Account"
+    return account_id, account_name
 
 def print_title():
     """
@@ -172,8 +169,9 @@ def get_organization_info():
     Returns:
         dict: Organization information or None if not available
     """
+    # Keep try-except for business logic: specific error handling for Organizations errors
     try:
-        org_client = boto3.client('organizations')
+        org_client = utils.get_boto3_client('organizations')
 
         # Describe organization
         org_response = org_client.describe_organization()
@@ -205,7 +203,7 @@ def collect_organizational_units():
     ou_data = []
 
     try:
-        org_client = boto3.client('organizations')
+        org_client = utils.get_boto3_client('organizations')
 
         # Get root first
         roots = org_client.list_roots()['Roots']
@@ -312,7 +310,7 @@ def collect_accounts():
     accounts_data = []
 
     try:
-        org_client = boto3.client('organizations')
+        org_client = utils.get_boto3_client('organizations')
 
         utils.log_info("Collecting organization accounts...")
 
@@ -362,9 +360,6 @@ def collect_accounts():
                 }
 
                 accounts_data.append(account_info)
-
-                # Small delay to avoid throttling
-                time.sleep(0.1)
 
     except Exception as e:
         utils.log_error("Error collecting accounts", e)
@@ -503,7 +498,7 @@ def collect_policies():
     policies_data = []
 
     try:
-        org_client = boto3.client('organizations')
+        org_client = utils.get_boto3_client('organizations')
 
         utils.log_info("Collecting organization policies...")
 
@@ -846,7 +841,7 @@ def main():
 
         try:
             # Test AWS credentials
-            sts = boto3.client('sts')
+            sts = utils.get_boto3_client('sts')
             sts.get_caller_identity()
             utils.log_success("AWS credentials validated")
 
