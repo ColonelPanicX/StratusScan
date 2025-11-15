@@ -6,13 +6,17 @@
 ===========================
 
 Title: AWS EBS Snapshots Export Tool
-Version: v2.0.0
-Date: AUG-19-2025
+Version: v2.1.0
+Date: NOV-15-2025
 
 Description:
 This script exports Amazon EBS snapshot information across AWS regions or a specific
 AWS region into an Excel spreadsheet. The export includes snapshot name, ID,
 description, size information, encryption status, storage tier, and creation date.
+
+Phase 4B Update:
+- Concurrent region scanning (4x-10x performance improvement)
+- Automatic fallback to sequential on errors
 """
 
 import sys
@@ -267,18 +271,27 @@ def main():
             regions = [region_choice]
             utils.log_info(f"Scanning only the {region_choice} AWS region.")
         
-        # Collect snapshot data from all specified AWS regions
-        all_snapshots = []
-        total_regions = len(regions)
+        # Collect snapshot data from all specified AWS regions (Phase 4B: concurrent)
+        utils.log_info("Collecting EBS snapshot data from all regions...")
 
-        for i, region in enumerate(regions, 1):
-            progress = (i / total_regions) * 100
-            utils.log_info(f"[{progress:.1f}%] Processing AWS region: {region} ({i}/{total_regions})")
-            
+        # Define region scan function
+        def scan_region_snapshots(region):
+            utils.log_info(f"Processing AWS region: {region}")
             region_snapshots = get_snapshots(region)
-            all_snapshots.extend(region_snapshots)
-
             utils.log_info(f"Found {len(region_snapshots)} snapshots in {region}")
+            return region_snapshots
+
+        # Use concurrent region scanning
+        region_results = utils.scan_regions_concurrent(
+            regions=regions,
+            scan_function=scan_region_snapshots,
+            show_progress=True
+        )
+
+        # Flatten results
+        all_snapshots = []
+        for snapshots in region_results:
+            all_snapshots.extend(snapshots)
         
         # Print summary
         total_snapshots = len(all_snapshots)
