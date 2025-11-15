@@ -5,15 +5,19 @@
 = AWS RESOURCE SCANNER =
 ===========================
 
-Title: AWS S3 Bucket Inventory Export 
-Version: v2.0.0
-Date: AUG-19-2025 
+Title: AWS S3 Bucket Inventory Export
+Version: v2.1.0
+Date: NOV-15-2025
 
 Description:
 This script exports information about S3 buckets across AWS regions including
 bucket name, region, creation date, and total object count. Bucket sizes are retrieved
 using S3 Storage Lens where available. The data is exported to a spreadsheet file with
 a standardized naming convention including AWS identifiers for compliance and audit purposes.
+
+Phase 4B Update:
+- Concurrent region scanning for CloudWatch metrics collection
+- Automatic fallback to sequential on errors
 """
 
 import sys
@@ -219,22 +223,21 @@ def get_latest_storage_lens_data(account_id):
         today = datetime.datetime.now()
         yesterday = today - datetime.timedelta(days=1)
         
-        # Try CloudWatch metrics in each AWS region
-        aws_regions = utils.get_aws_regions()
-        
-        for region in aws_regions:
+        # Get list of all buckets (global S3 call)
+        s3_client = utils.get_boto3_client('s3')
+        all_bucket_names = [bucket['Name'] for bucket in s3_client.list_buckets()['Buckets']]
+
+        # Define function to collect metrics for a single region (Phase 4B)
+        def collect_cloudwatch_metrics_for_region(region):
+            region_data = {}
             try:
                 cw_client = utils.get_boto3_client('cloudwatch', region_name=region)
-                
-                # Get a list of all buckets
-                s3_client = utils.get_boto3_client('s3')
-                buckets = [bucket['Name'] for bucket in s3_client.list_buckets()['Buckets']]
-                
-                for bucket_name in buckets:
+
+                for bucket_name in all_bucket_names:
                     # Skip if we already have data for this bucket
                     if bucket_name in latest_data:
                         continue
-                        
+
                     try:
                         # Get BucketSizeBytes metric
                         size_response = cw_client.get_metric_statistics(
@@ -249,7 +252,7 @@ def get_latest_storage_lens_data(account_id):
                             Period=86400,
                             Statistics=['Average']
                         )
-                        
+
                         # Get NumberOfObjects metric
                         objects_response = cw_client.get_metric_statistics(
                             Namespace='AWS/S3',
@@ -263,31 +266,44 @@ def get_latest_storage_lens_data(account_id):
                             Period=86400,
                             Statistics=['Average']
                         )
-                        
+
                         # Process metrics if available
                         size_bytes = 0
                         obj_count = 0
-                        
+
                         if 'Datapoints' in size_response and len(size_response['Datapoints']) > 0:
                             size_bytes = size_response['Datapoints'][0]['Average']
-                            
+
                         if 'Datapoints' in objects_response and len(objects_response['Datapoints']) > 0:
                             obj_count = int(objects_response['Datapoints'][0]['Average'])
-                        
-                        latest_data[bucket_name] = {
-                            'size_bytes': size_bytes,
-                            'object_count': obj_count
-                        }
-                        
+
+                        if size_bytes > 0 or obj_count > 0:
+                            region_data[bucket_name] = {
+                                'size_bytes': size_bytes,
+                                'object_count': obj_count
+                            }
+
                     except Exception as e:
                         utils.log_warning(f"Error getting metrics for bucket {bucket_name} in region {region}: {e}")
-                        # Skip this bucket and continue
                         continue
-                        
+
             except Exception as e:
                 utils.log_warning(f"Error getting CloudWatch metrics in region {region}: {e}")
-                continue
-        
+
+            return region_data
+
+        # Use concurrent region scanning for CloudWatch metrics (Phase 4B)
+        aws_regions = utils.get_aws_regions()
+        region_results = utils.scan_regions_concurrent(
+            regions=aws_regions,
+            scan_function=collect_cloudwatch_metrics_for_region,
+            show_progress=False  # Don't show progress for S3 metrics collection
+        )
+
+        # Merge all region data
+        for region_data in region_results:
+            latest_data.update(region_data)
+
         return latest_data
             
     except Exception as e:
