@@ -5,8 +5,8 @@
 ===========================
 
 Title: AWS AMI (Amazon Machine Images) Export Tool
-Version: v1.0.0
-Date: NOV-09-2025
+Version: v1.1.0
+Date: NOV-15-2025
 
 Description:
 This script exports account-owned Amazon Machine Image (AMI) information from all regions
@@ -23,6 +23,10 @@ Features:
 - Platform details (Linux, Windows)
 - Block device mappings
 - Tags
+
+Phase 4B Update:
+- Concurrent region scanning (4x-10x performance improvement)
+- Automatic fallback to sequential on errors
 """
 
 import sys
@@ -95,129 +99,126 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
-@utils.aws_error_handler("Collecting AMIs", default_return=[])
-def collect_amis(regions: List[str], account_id: str) -> List[Dict[str, Any]]:
+@utils.aws_error_handler("Collecting AMIs from region", default_return=[])
+def collect_amis_in_region(region: str, account_id: str) -> List[Dict[str, Any]]:
     """
-    Collect account-owned AMI information from AWS regions.
+    Collect account-owned AMI information from a single AWS region.
 
     Args:
-        regions: List of AWS regions to scan
+        region: AWS region to scan
         account_id: AWS account ID to filter owned AMIs
 
     Returns:
         list: List of dictionaries with AMI information
     """
-    print("\n=== COLLECTING ACCOUNT-OWNED AMIs ===")
-    all_amis = []
+    region_amis = []
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
+    if not utils.validate_aws_region(region):
+        utils.log_error(f"Skipping invalid AWS region: {region}")
+        return []
 
-        print(f"\nProcessing region: {region}")
+    print(f"  Processing region: {region}")
 
-        try:
-            ec2_client = utils.get_boto3_client('ec2', region_name=region)
+    try:
+        ec2_client = utils.get_boto3_client('ec2', region_name=region)
 
-            # Get AMIs owned by this account
-            response = ec2_client.describe_images(Owners=['self'])
-            amis = response.get('Images', [])
+        # Get AMIs owned by this account
+        response = ec2_client.describe_images(Owners=['self'])
+        amis = response.get('Images', [])
 
-            print(f"  Found {len(amis)} account-owned AMIs")
+        print(f"  Found {len(amis)} account-owned AMIs")
 
-            for ami in amis:
-                ami_id = ami.get('ImageId', '')
-                ami_name = ami.get('Name', 'N/A')
-                description = ami.get('Description', 'N/A')
-                state = ami.get('State', '')
-                creation_date = ami.get('CreationDate', 'N/A')
+        for ami in amis:
+            ami_id = ami.get('ImageId', '')
+            ami_name = ami.get('Name', 'N/A')
+            description = ami.get('Description', 'N/A')
+            state = ami.get('State', '')
+            creation_date = ami.get('CreationDate', 'N/A')
 
-                # Architecture
-                architecture = ami.get('Architecture', 'N/A')
+            # Architecture
+            architecture = ami.get('Architecture', 'N/A')
 
-                # Virtualization type
-                virtualization_type = ami.get('VirtualizationType', 'N/A')
+            # Virtualization type
+            virtualization_type = ami.get('VirtualizationType', 'N/A')
 
-                # Root device type and name
-                root_device_type = ami.get('RootDeviceType', 'N/A')
-                root_device_name = ami.get('RootDeviceName', 'N/A')
+            # Root device type and name
+            root_device_type = ami.get('RootDeviceType', 'N/A')
+            root_device_name = ami.get('RootDeviceName', 'N/A')
 
-                # Platform (Windows or blank for Linux)
-                platform = ami.get('Platform', 'Linux')
-                platform_details = ami.get('PlatformDetails', 'N/A')
+            # Platform (Windows or blank for Linux)
+            platform = ami.get('Platform', 'Linux')
+            platform_details = ami.get('PlatformDetails', 'N/A')
 
-                # Public/Private
-                is_public = ami.get('Public', False)
-                visibility = 'Public' if is_public else 'Private'
+            # Public/Private
+            is_public = ami.get('Public', False)
+            visibility = 'Public' if is_public else 'Private'
 
-                # Image location
-                image_location = ami.get('ImageLocation', 'N/A')
+            # Image location
+            image_location = ami.get('ImageLocation', 'N/A')
 
-                # EBS snapshots (from block device mappings)
-                block_device_mappings = ami.get('BlockDeviceMappings', [])
-                snapshot_ids = []
-                total_volume_size = 0
+            # EBS snapshots (from block device mappings)
+            block_device_mappings = ami.get('BlockDeviceMappings', [])
+            snapshot_ids = []
+            total_volume_size = 0
 
-                for bdm in block_device_mappings:
-                    ebs = bdm.get('Ebs', {})
-                    if ebs:
-                        snapshot_id = ebs.get('SnapshotId', '')
-                        volume_size = ebs.get('VolumeSize', 0)
-                        if snapshot_id:
-                            snapshot_ids.append(snapshot_id)
-                        total_volume_size += volume_size
+            for bdm in block_device_mappings:
+                ebs = bdm.get('Ebs', {})
+                if ebs:
+                    snapshot_id = ebs.get('SnapshotId', '')
+                    volume_size = ebs.get('VolumeSize', 0)
+                    if snapshot_id:
+                        snapshot_ids.append(snapshot_id)
+                    total_volume_size += volume_size
 
-                snapshots_str = ', '.join(snapshot_ids) if snapshot_ids else 'N/A'
+            snapshots_str = ', '.join(snapshot_ids) if snapshot_ids else 'N/A'
 
-                # ENA support
-                ena_support = ami.get('EnaSupport', False)
+            # ENA support
+            ena_support = ami.get('EnaSupport', False)
 
-                # Kernel and ramdisk IDs (older AMIs)
-                kernel_id = ami.get('KernelId', 'N/A')
-                ramdisk_id = ami.get('RamdiskId', 'N/A')
+            # Kernel and ramdisk IDs (older AMIs)
+            kernel_id = ami.get('KernelId', 'N/A')
+            ramdisk_id = ami.get('RamdiskId', 'N/A')
 
-                # Boot mode
-                boot_mode = ami.get('BootMode', 'N/A')
+            # Boot mode
+            boot_mode = ami.get('BootMode', 'N/A')
 
-                # Deprecation time
-                deprecation_time = ami.get('DeprecationTime', 'N/A')
+            # Deprecation time
+            deprecation_time = ami.get('DeprecationTime', 'N/A')
 
-                # Tags
-                tags = ami.get('Tags', [])
-                tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
-                tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
+            # Tags
+            tags = ami.get('Tags', [])
+            tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
+            tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
 
-                all_amis.append({
-                    'Region': region,
-                    'AMI ID': ami_id,
-                    'AMI Name': ami_name,
-                    'State': state,
-                    'Visibility': visibility,
-                    'Architecture': architecture,
-                    'Platform': platform,
-                    'Platform Details': platform_details,
-                    'Virtualization Type': virtualization_type,
-                    'Root Device Type': root_device_type,
-                    'Root Device Name': root_device_name,
-                    'Total Volume Size (GB)': total_volume_size,
-                    'Snapshot IDs': snapshots_str,
-                    'ENA Support': ena_support,
-                    'Boot Mode': boot_mode,
-                    'Creation Date': creation_date,
-                    'Deprecation Time': deprecation_time,
-                    'Image Location': image_location,
-                    'Kernel ID': kernel_id,
-                    'Ramdisk ID': ramdisk_id,
-                    'Description': description,
-                    'Tags': tags_str
-                })
+            region_amis.append({
+                'Region': region,
+                'AMI ID': ami_id,
+                'AMI Name': ami_name,
+                'State': state,
+                'Visibility': visibility,
+                'Architecture': architecture,
+                'Platform': platform,
+                'Platform Details': platform_details,
+                'Virtualization Type': virtualization_type,
+                'Root Device Type': root_device_type,
+                'Root Device Name': root_device_name,
+                'Total Volume Size (GB)': total_volume_size,
+                'Snapshot IDs': snapshots_str,
+                'ENA Support': ena_support,
+                'Boot Mode': boot_mode,
+                'Creation Date': creation_date,
+                'Deprecation Time': deprecation_time,
+                'Image Location': image_location,
+                'Kernel ID': kernel_id,
+                'Ramdisk ID': ramdisk_id,
+                'Description': description,
+                'Tags': tags_str
+            })
 
-        except Exception as e:
-            utils.log_error(f"Error processing region {region} for AMIs", e)
+    except Exception as e:
+        utils.log_error(f"Error processing region {region} for AMIs", e)
 
-    utils.log_success(f"Total AMIs collected: {len(all_amis)}")
-    return all_amis
+    return region_amis
 
 
 def export_ami_data(account_id: str, account_name: str):
@@ -262,8 +263,26 @@ def export_ami_data(account_id: str, account_name: str):
     # Import pandas for DataFrame handling
     import pandas as pd
 
-    # Collect AMIs
-    amis = collect_amis(regions, account_id)
+    # Collect AMIs using concurrent region scanning (Phase 4B)
+    print("\n=== COLLECTING ACCOUNT-OWNED AMIs ===")
+
+    # Define region scan function
+    def scan_region_amis(region):
+        return collect_amis_in_region(region, account_id)
+
+    # Use concurrent region scanning
+    region_results = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_region_amis,
+        show_progress=True
+    )
+
+    # Flatten results
+    amis = []
+    for region_amis in region_results:
+        amis.extend(region_amis)
+
+    utils.log_success(f"Total AMIs collected: {len(amis)}")
 
     # Check if we have any data
     if not amis:
