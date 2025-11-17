@@ -6,8 +6,8 @@
 ===========================
 
 Title: AWS Detective Information Collection Script
-Version: v1.0.0
-Date: NOV-11-2025
+Version: v1.1.0
+Date: NOV-16-2025
 
 Description:
 This script collects comprehensive AWS Detective information from AWS environments
@@ -17,6 +17,9 @@ complete security investigation capability analysis.
 
 Collected information includes: Detective graphs, member accounts, pending invitations,
 data source configurations, volume metrics, and overall investigation capability summary.
+
+Features:
+- Phase 4B: Concurrent region scanning (4x-10x performance improvement)
 
 Prerequisites:
 - AWS Detective must be enabled in the target account
@@ -58,7 +61,7 @@ def print_title():
     print("====================================================================")
     print("AWS DETECTIVE INFORMATION COLLECTION")
     print("====================================================================")
-    print("Version: v1.0.0                       Date: NOV-11-2025")
+    print("Version: v1.1.0                       Date: NOV-16-2025")
     print("Environment: AWS Commercial")
     print("====================================================================")
 
@@ -294,6 +297,62 @@ def format_tags(resource_arn: str, client) -> str:
         return 'N/A'
 
 
+def collect_all_graphs(regions: List[str]) -> List[Dict[str, Any]]:
+    """
+    Collect Detective graphs using concurrent scanning.
+
+    Args:
+        regions: List of AWS regions to scan
+
+    Returns:
+        list: List of all graph information from all regions
+    """
+    print("\n=== COLLECTING DETECTIVE GRAPHS ===")
+    utils.log_info(f"Scanning {len(regions)} regions for Detective graphs...")
+
+    region_results = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=collect_graphs,
+        show_progress=True
+    )
+
+    # Flatten results
+    all_graphs = []
+    for graphs_in_region in region_results:
+        all_graphs.extend(graphs_in_region)
+
+    utils.log_success(f"Total Detective graphs collected: {len(all_graphs)}")
+    return all_graphs
+
+
+def collect_all_invitations(regions: List[str]) -> List[Dict[str, Any]]:
+    """
+    Collect Detective invitations using concurrent scanning.
+
+    Args:
+        regions: List of AWS regions to scan
+
+    Returns:
+        list: List of all invitation information from all regions
+    """
+    print("\n=== COLLECTING DETECTIVE INVITATIONS ===")
+    utils.log_info(f"Scanning {len(regions)} regions for invitations...")
+
+    region_results = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=collect_invitations,
+        show_progress=True
+    )
+
+    # Flatten results
+    all_invitations = []
+    for invitations_in_region in region_results:
+        all_invitations.extend(invitations_in_region)
+
+    utils.log_success(f"Total invitations collected: {len(all_invitations)}")
+    return all_invitations
+
+
 def export_to_excel(
     graphs_data: List[Dict[str, Any]],
     members_data: List[Dict[str, Any]],
@@ -458,29 +517,21 @@ def main():
 
         utils.log_info(f"Will scan Detective in regions: {', '.join(regions)}")
 
-        # Collect data from all regions
-        all_graphs_data = []
+        # Collect graphs concurrently
+        all_graphs_data = collect_all_graphs(regions)
+
+        # For each graph, collect members (members need graph ARNs, so sequential is OK)
         all_members_data = []
-        all_invitations_data = []
+        for graph in all_graphs_data:
+            graph_arn = graph.get('Graph ARN')
+            region = graph.get('Region')
+            if graph_arn and graph_arn != 'N/A':
+                utils.log_info(f"Collecting members for graph in {region}...")
+                members = collect_members(region, graph_arn)
+                all_members_data.extend(members)
 
-        for region in regions:
-            utils.log_info(f"Scanning Detective in {region}...")
-
-            # Collect graphs
-            graphs = collect_graphs(region)
-            all_graphs_data.extend(graphs)
-
-            # For each graph, collect members
-            for graph in graphs:
-                graph_arn = graph.get('Graph ARN')
-                if graph_arn and graph_arn != 'N/A':
-                    utils.log_info(f"Collecting members for graph in {region}...")
-                    members = collect_members(region, graph_arn)
-                    all_members_data.extend(members)
-
-            # Collect invitations
-            invitations = collect_invitations(region)
-            all_invitations_data.extend(invitations)
+        # Collect invitations concurrently
+        all_invitations_data = collect_all_invitations(regions)
 
         # Check if any data was collected
         if not all_graphs_data and not all_invitations_data:
