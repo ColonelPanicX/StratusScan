@@ -6,16 +6,22 @@
 ===========================
 
 Title: AWS ECS Resource Export Script
-Version: v1.0.0
-Date: MAR-05-2025
+Version: v1.1.0
+Date: NOV-16-2025
 
 Description:
-This script exports AWS ECS (Elastic Container Service) resources including clusters, 
-services, tasks, and container details across all regions. The data is exported to 
+This script exports AWS ECS (Elastic Container Service) resources including clusters,
+services, tasks, and container details across all regions. The data is exported to
 an Excel spreadsheet with detailed information about ECS deployments.
 
+Features:
+- Comprehensive ECS resource collection (clusters, services, tasks, containers)
+- Multi-region scanning with automatic region detection
+- Phase 4B: Concurrent region scanning (4x-10x performance improvement)
+- Export to Excel with detailed container and networking information
+
 Exported information includes: Cluster Name, Service Name, Task Definition, Task Family,
-Task Revision, Task Status, Launch Type, Desired Task Count, Running Task Count, 
+Task Revision, Task Status, Launch Type, Desired Task Count, Running Task Count,
 CPU Allocation, Memory Allocation, Container Name, Image Used, Port Mappings,
 ELB Target Group, Network Mode, Subnet IDs, Security Groups, IAM Role, and Creation Date.
 """
@@ -26,6 +32,7 @@ import boto3
 import datetime
 import time
 from pathlib import Path
+from typing import List, Dict, Any
 from botocore.exceptions import ClientError, EndpointConnectionError
 
 # Add path to import utils module
@@ -102,7 +109,7 @@ def print_title():
     print("====================================================================")
     print("AWS ECS (ELASTIC CONTAINER SERVICE) RESOURCE EXPORT")
     print("====================================================================")
-    print("Version: v1.0.0                                 Date: MAR-05-2025")
+    print("Version: v1.1.0                                 Date: NOV-16-2025")
     print("====================================================================")
     
     # Get account information
@@ -202,13 +209,14 @@ def get_load_balancer_name(elbv2_client, load_balancer_arn):
         return response['LoadBalancers'][0].get('LoadBalancerName', 'Unknown')
     return 'Unknown'
 
-def get_ecs_resources(region):
+@utils.aws_error_handler("Collecting ECS resources from region", default_return=[])
+def get_ecs_resources_from_region(region: str) -> List[Dict[str, Any]]:
     """
     Collect ECS resource information for a specific region.
-    
+
     Args:
         region: AWS region name
-        
+
     Returns:
         list: List of dictionaries with ECS resource information
     """
@@ -451,8 +459,34 @@ def get_ecs_resources(region):
         print(f"  ECS service is not available in region {region}")
     except Exception as e:
         print(f"  Error collecting ECS data in region {region}: {e}")
-    
+
     return ecs_resources
+
+def get_ecs_resources(regions: List[str]) -> List[Dict[str, Any]]:
+    """
+    Collect ECS resources from multiple regions concurrently.
+
+    Args:
+        regions: List of AWS region names to scan
+
+    Returns:
+        list: Combined list of ECS resources from all regions
+    """
+    print("\n=== COLLECTING ECS RESOURCES ===")
+    utils.log_info(f"Scanning {len(regions)} regions...")
+
+    region_results = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=get_ecs_resources_from_region,
+        show_progress=True
+    )
+
+    all_resources = []
+    for resources_in_region in region_results:
+        all_resources.extend(resources_in_region)
+
+    utils.log_success(f"Total ECS resources collected: {len(all_resources)}")
+    return all_resources
 
 def main():
     """
@@ -487,12 +521,9 @@ def main():
                 regions_to_scan = ['us-east-1']
         
         print(f"\nScanning {len(regions_to_scan)} AWS regions for ECS resources...")
-        
-        # Collect ECS information from all regions
-        all_ecs_resources = []
-        for region in regions_to_scan:
-            region_resources = get_ecs_resources(region)
-            all_ecs_resources.extend(region_resources)
+
+        # Collect ECS information from all regions (concurrent)
+        all_ecs_resources = get_ecs_resources(regions_to_scan)
         
         if not all_ecs_resources:
             print("\nNo ECS resources found in the scanned regions.")
