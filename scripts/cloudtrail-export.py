@@ -5,8 +5,8 @@
 ===========================
 
 Title: AWS CloudTrail Export Tool
-Version: v1.0.0
-Date: NOV-09-2025
+Version: v1.1.0
+Date: NOV-16-2025
 
 Description:
 This script exports AWS CloudTrail configuration information from all regions into an Excel
@@ -21,6 +21,7 @@ Features:
 - CloudWatch Logs integration
 - Insight selectors for anomaly detection
 - Event data stores for CloudTrail Lake
+- Phase 4B: Concurrent region scanning (4x-10x performance improvement)
 """
 
 import sys
@@ -58,7 +59,7 @@ def print_title():
     print("====================================================================")
     print("                AWS CLOUDTRAIL EXPORT TOOL")
     print("====================================================================")
-    print("Version: v1.0.0                        Date: NOV-09-2025")
+    print("Version: v1.1.0                        Date: NOV-16-2025")
     print("Environment: AWS Commercial")
     print("====================================================================")
 
@@ -93,269 +94,343 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
-@utils.aws_error_handler("Collecting CloudTrail trails", default_return=[])
-def collect_trails(regions: List[str]) -> List[Dict[str, Any]]:
+@utils.aws_error_handler("Collecting CloudTrail trails from region", default_return=[])
+def collect_trails_from_region(region: str) -> List[Dict[str, Any]]:
     """
-    Collect CloudTrail trail information from AWS regions.
+    Collect CloudTrail trail information from a single AWS region.
 
     Args:
-        regions: List of AWS regions to scan
+        region: AWS region to scan
 
     Returns:
         list: List of dictionaries with trail information
     """
-    print("\n=== COLLECTING CLOUDTRAIL TRAILS ===")
-    all_trails = []
-    seen_trail_arns = set()  # To avoid duplicates from multi-region trails
+    if not utils.validate_aws_region(region):
+        utils.log_error(f"Skipping invalid AWS region: {region}")
+        return []
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
+    trails_data = []
 
-        print(f"\nProcessing region: {region}")
+    ct_client = utils.get_boto3_client('cloudtrail', region_name=region)
+
+    # List trails
+    trails_response = ct_client.list_trails()
+    trails = trails_response.get('Trails', [])
+
+    for trail_summary in trails:
+        trail_arn = trail_summary.get('TrailARN', '')
+        trail_name = trail_summary.get('Name', '')
+
+        utils.log_info(f"Processing trail: {trail_name} in {region}")
 
         try:
-            ct_client = utils.get_boto3_client('cloudtrail', region_name=region)
+            # Get trail status
+            status_response = ct_client.get_trail_status(Name=trail_arn)
 
-            # List trails
-            trails_response = ct_client.list_trails()
-            trails = trails_response.get('Trails', [])
+            is_logging = status_response.get('IsLogging', False)
+            latest_delivery_time = status_response.get('LatestDeliveryTime', '')
+            if latest_delivery_time:
+                latest_delivery_time = latest_delivery_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(latest_delivery_time, datetime.datetime) else str(latest_delivery_time)
 
-            for trail_summary in trails:
-                trail_arn = trail_summary.get('TrailARN', '')
-                trail_name = trail_summary.get('Name', '')
+            latest_notification_time = status_response.get('LatestNotificationTime', '')
+            if latest_notification_time:
+                latest_notification_time = latest_notification_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(latest_notification_time, datetime.datetime) else str(latest_notification_time)
 
-                # Skip if we've already processed this trail (multi-region)
-                if trail_arn in seen_trail_arns:
-                    continue
-                seen_trail_arns.add(trail_arn)
+            # Get trail details
+            trail_list = ct_client.describe_trails(trailNameList=[trail_name])
+            trail_details = trail_list.get('trailList', [{}])[0]
 
-                print(f"  Processing trail: {trail_name}")
+            # S3 bucket
+            s3_bucket = trail_details.get('S3BucketName', '')
 
-                try:
-                    # Get trail status
-                    status_response = ct_client.get_trail_status(Name=trail_arn)
+            # S3 key prefix
+            s3_prefix = trail_details.get('S3KeyPrefix', 'N/A')
 
-                    is_logging = status_response.get('IsLogging', False)
-                    latest_delivery_time = status_response.get('LatestDeliveryTime', '')
-                    if latest_delivery_time:
-                        latest_delivery_time = latest_delivery_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(latest_delivery_time, datetime.datetime) else str(latest_delivery_time)
+            # SNS topic
+            sns_topic = trail_details.get('SnsTopicARN', 'N/A')
 
-                    latest_notification_time = status_response.get('LatestNotificationTime', '')
-                    if latest_notification_time:
-                        latest_notification_time = latest_notification_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(latest_notification_time, datetime.datetime) else str(latest_notification_time)
+            # CloudWatch Logs
+            log_group_arn = trail_details.get('CloudWatchLogsLogGroupArn', 'N/A')
+            log_role_arn = trail_details.get('CloudWatchLogsRoleArn', 'N/A')
 
-                    # Get trail details
-                    trail_list = ct_client.describe_trails(trailNameList=[trail_name])
-                    trail_details = trail_list.get('trailList', [{}])[0]
+            # KMS key
+            kms_key_id = trail_details.get('KmsKeyId', 'N/A')
 
-                    # S3 bucket
-                    s3_bucket = trail_details.get('S3BucketName', '')
+            # Multi-region trail
+            is_multi_region = trail_details.get('IsMultiRegionTrail', False)
 
-                    # S3 key prefix
-                    s3_prefix = trail_details.get('S3KeyPrefix', 'N/A')
+            # Organization trail
+            is_organization_trail = trail_details.get('IsOrganizationTrail', False)
 
-                    # SNS topic
-                    sns_topic = trail_details.get('SnsTopicARN', 'N/A')
+            # Home region
+            home_region = trail_details.get('HomeRegion', region)
 
-                    # CloudWatch Logs
-                    log_group_arn = trail_details.get('CloudWatchLogsLogGroupArn', 'N/A')
-                    log_role_arn = trail_details.get('CloudWatchLogsRoleArn', 'N/A')
+            # Log file validation
+            log_file_validation = trail_details.get('LogFileValidationEnabled', False)
 
-                    # KMS key
-                    kms_key_id = trail_details.get('KmsKeyId', 'N/A')
+            # Include global service events
+            include_global_events = trail_details.get('IncludeGlobalServiceEvents', False)
 
-                    # Multi-region trail
-                    is_multi_region = trail_details.get('IsMultiRegionTrail', False)
+            # Has custom event selectors
+            has_custom_selectors = trail_details.get('HasCustomEventSelectors', False)
 
-                    # Organization trail
-                    is_organization_trail = trail_details.get('IsOrganizationTrail', False)
+            # Has insight selectors
+            has_insight_selectors = trail_details.get('HasInsightSelectors', False)
 
-                    # Home region
-                    home_region = trail_details.get('HomeRegion', region)
-
-                    # Log file validation
-                    log_file_validation = trail_details.get('LogFileValidationEnabled', False)
-
-                    # Include global service events
-                    include_global_events = trail_details.get('IncludeGlobalServiceEvents', False)
-
-                    # Has custom event selectors
-                    has_custom_selectors = trail_details.get('HasCustomEventSelectors', False)
-
-                    # Has insight selectors
-                    has_insight_selectors = trail_details.get('HasInsightSelectors', False)
-
-                    all_trails.append({
-                        'Region': region,
-                        'Trail Name': trail_name,
-                        'Home Region': home_region,
-                        'Is Logging': is_logging,
-                        'Multi-Region': is_multi_region,
-                        'Organization Trail': is_organization_trail,
-                        'S3 Bucket': s3_bucket,
-                        'S3 Prefix': s3_prefix,
-                        'Log File Validation': log_file_validation,
-                        'KMS Encryption': 'Yes' if kms_key_id != 'N/A' else 'No',
-                        'KMS Key ID': kms_key_id,
-                        'CloudWatch Logs': 'Yes' if log_group_arn != 'N/A' else 'No',
-                        'Log Group ARN': log_group_arn,
-                        'Log Role ARN': log_role_arn,
-                        'SNS Topic': sns_topic,
-                        'Include Global Events': include_global_events,
-                        'Has Custom Selectors': has_custom_selectors,
-                        'Has Insight Selectors': has_insight_selectors,
-                        'Latest Delivery': latest_delivery_time if latest_delivery_time else 'Never',
-                        'Latest Notification': latest_notification_time if latest_notification_time else 'Never',
-                        'Trail ARN': trail_arn
-                    })
-
-                except Exception as e:
-                    utils.log_warning(f"Could not get details for trail {trail_name}: {e}")
+            trails_data.append({
+                'Region': region,
+                'Trail Name': trail_name,
+                'Trail ARN': trail_arn,
+                'Home Region': home_region,
+                'Is Logging': is_logging,
+                'Multi-Region': is_multi_region,
+                'Organization Trail': is_organization_trail,
+                'S3 Bucket': s3_bucket,
+                'S3 Prefix': s3_prefix,
+                'Log File Validation': log_file_validation,
+                'KMS Encryption': 'Yes' if kms_key_id != 'N/A' else 'No',
+                'KMS Key ID': kms_key_id,
+                'CloudWatch Logs': 'Yes' if log_group_arn != 'N/A' else 'No',
+                'Log Group ARN': log_group_arn,
+                'Log Role ARN': log_role_arn,
+                'SNS Topic': sns_topic,
+                'Include Global Events': include_global_events,
+                'Has Custom Selectors': has_custom_selectors,
+                'Has Insight Selectors': has_insight_selectors,
+                'Latest Delivery': latest_delivery_time if latest_delivery_time else 'Never',
+                'Latest Notification': latest_notification_time if latest_notification_time else 'Never'
+            })
 
         except Exception as e:
-            utils.log_error(f"Error processing region {region} for CloudTrail trails", e)
+            utils.log_warning(f"Could not get details for trail {trail_name}: {e}")
 
-    utils.log_success(f"Total CloudTrail trails collected: {len(all_trails)}")
-    return all_trails
+    utils.log_info(f"Found {len(trails_data)} trails in {region}")
+    return trails_data
 
 
-@utils.aws_error_handler("Collecting event selectors", default_return=[])
-def collect_event_selectors(regions: List[str]) -> List[Dict[str, Any]]:
+def collect_trails(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect CloudTrail event selector information.
+    Collect CloudTrail trail information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
+
+    Returns:
+        list: List of dictionaries with trail information (deduplicated by ARN)
+    """
+    print("\n=== COLLECTING CLOUDTRAIL TRAILS ===")
+    utils.log_info(f"Scanning {len(regions)} regions for CloudTrail trails...")
+
+    # Use concurrent region scanning
+    region_results = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=collect_trails_from_region,
+        show_progress=True
+    )
+
+    # Flatten results and deduplicate by Trail ARN (for multi-region trails)
+    all_trails = []
+    seen_trail_arns = set()
+
+    for trails_in_region in region_results:
+        for trail in trails_in_region:
+            trail_arn = trail.get('Trail ARN', '')
+            if trail_arn and trail_arn not in seen_trail_arns:
+                seen_trail_arns.add(trail_arn)
+                all_trails.append(trail)
+            elif not trail_arn:
+                # If no ARN, include it anyway (shouldn't happen but handle gracefully)
+                all_trails.append(trail)
+
+    utils.log_success(f"Total CloudTrail trails collected (deduplicated): {len(all_trails)}")
+    return all_trails
+
+
+@utils.aws_error_handler("Collecting event selectors from region", default_return=[])
+def collect_event_selectors_from_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Collect CloudTrail event selector information from a single region.
+
+    Args:
+        region: AWS region to scan
 
     Returns:
         list: List of dictionaries with event selector information
     """
-    print("\n=== COLLECTING EVENT SELECTORS ===")
-    all_selectors = []
-    seen_trail_arns = set()
+    if not utils.validate_aws_region(region):
+        return []
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
+    selectors_data = []
 
-        print(f"\nProcessing region: {region}")
+    ct_client = utils.get_boto3_client('cloudtrail', region_name=region)
+
+    # List trails
+    trails_response = ct_client.list_trails()
+    trails = trails_response.get('Trails', [])
+
+    for trail_summary in trails:
+        trail_arn = trail_summary.get('TrailARN', '')
+        trail_name = trail_summary.get('Name', '')
 
         try:
-            ct_client = utils.get_boto3_client('cloudtrail', region_name=region)
+            # Get event selectors
+            selectors_response = ct_client.get_event_selectors(TrailName=trail_name)
 
-            # List trails
-            trails_response = ct_client.list_trails()
-            trails = trails_response.get('Trails', [])
+            event_selectors = selectors_response.get('EventSelectors', [])
 
-            for trail_summary in trails:
-                trail_arn = trail_summary.get('TrailARN', '')
-                trail_name = trail_summary.get('Name', '')
+            for i, selector in enumerate(event_selectors):
+                read_write_type = selector.get('ReadWriteType', 'All')
+                include_management_events = selector.get('IncludeManagementEvents', True)
 
-                # Skip duplicates
-                if trail_arn in seen_trail_arns:
-                    continue
-                seen_trail_arns.add(trail_arn)
+                # Data resources
+                data_resources = selector.get('DataResources', [])
+                data_resource_count = len(data_resources)
 
-                try:
-                    # Get event selectors
-                    selectors_response = ct_client.get_event_selectors(TrailName=trail_name)
+                # Exclude management event sources
+                exclude_sources = selector.get('ExcludeManagementEventSources', [])
+                exclude_sources_str = ', '.join(exclude_sources) if exclude_sources else 'None'
 
-                    event_selectors = selectors_response.get('EventSelectors', [])
-
-                    for i, selector in enumerate(event_selectors):
-                        read_write_type = selector.get('ReadWriteType', 'All')
-                        include_management_events = selector.get('IncludeManagementEvents', True)
-
-                        # Data resources
-                        data_resources = selector.get('DataResources', [])
-                        data_resource_count = len(data_resources)
-
-                        # Exclude management event sources
-                        exclude_sources = selector.get('ExcludeManagementEventSources', [])
-                        exclude_sources_str = ', '.join(exclude_sources) if exclude_sources else 'None'
-
-                        all_selectors.append({
-                            'Region': region,
-                            'Trail Name': trail_name,
-                            'Selector Index': i,
-                            'Read/Write Type': read_write_type,
-                            'Include Management Events': include_management_events,
-                            'Data Resource Count': data_resource_count,
-                            'Exclude Sources': exclude_sources_str
-                        })
-
-                except Exception as e:
-                    utils.log_warning(f"Could not get event selectors for trail {trail_name}: {e}")
+                selectors_data.append({
+                    'Region': region,
+                    'Trail Name': trail_name,
+                    'Trail ARN': trail_arn,
+                    'Selector Index': i,
+                    'Read/Write Type': read_write_type,
+                    'Include Management Events': include_management_events,
+                    'Data Resource Count': data_resource_count,
+                    'Exclude Sources': exclude_sources_str
+                })
 
         except Exception as e:
-            utils.log_error(f"Error collecting event selectors in region {region}", e)
+            utils.log_warning(f"Could not get event selectors for trail {trail_name}: {e}")
 
-    utils.log_success(f"Total event selectors collected: {len(all_selectors)}")
-    return all_selectors
+    utils.log_info(f"Found {len(selectors_data)} event selectors in {region}")
+    return selectors_data
 
 
-@utils.aws_error_handler("Collecting insight selectors", default_return=[])
-def collect_insight_selectors(regions: List[str]) -> List[Dict[str, Any]]:
+def collect_event_selectors(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect CloudTrail insight selector information.
+    Collect CloudTrail event selector information using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
 
     Returns:
+        list: List of dictionaries with event selector information (deduplicated)
+    """
+    print("\n=== COLLECTING EVENT SELECTORS ===")
+    utils.log_info(f"Scanning {len(regions)} regions for event selectors...")
+
+    # Use concurrent region scanning
+    region_results = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=collect_event_selectors_from_region,
+        show_progress=True
+    )
+
+    # Flatten results and deduplicate by Trail ARN
+    all_selectors = []
+    seen_combinations = set()
+
+    for selectors_in_region in region_results:
+        for selector in selectors_in_region:
+            trail_arn = selector.get('Trail ARN', '')
+            selector_idx = selector.get('Selector Index', 0)
+            combo_key = f"{trail_arn}:{selector_idx}"
+
+            if combo_key not in seen_combinations:
+                seen_combinations.add(combo_key)
+                all_selectors.append(selector)
+
+    utils.log_success(f"Total event selectors collected (deduplicated): {len(all_selectors)}")
+    return all_selectors
+
+
+@utils.aws_error_handler("Collecting insight selectors from region", default_return=[])
+def collect_insight_selectors_from_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Collect CloudTrail insight selector information from a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
         list: List of dictionaries with insight selector information
     """
-    print("\n=== COLLECTING INSIGHT SELECTORS ===")
-    all_insights = []
-    seen_trail_arns = set()
+    if not utils.validate_aws_region(region):
+        return []
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
+    insights_data = []
 
-        print(f"\nProcessing region: {region}")
+    ct_client = utils.get_boto3_client('cloudtrail', region_name=region)
+
+    # List trails
+    trails_response = ct_client.list_trails()
+    trails = trails_response.get('Trails', [])
+
+    for trail_summary in trails:
+        trail_arn = trail_summary.get('TrailARN', '')
+        trail_name = trail_summary.get('Name', '')
 
         try:
-            ct_client = utils.get_boto3_client('cloudtrail', region_name=region)
+            # Get insight selectors
+            insights_response = ct_client.get_insight_selectors(TrailName=trail_name)
 
-            # List trails
-            trails_response = ct_client.list_trails()
-            trails = trails_response.get('Trails', [])
+            insight_selectors = insights_response.get('InsightSelectors', [])
 
-            for trail_summary in trails:
-                trail_arn = trail_summary.get('TrailARN', '')
-                trail_name = trail_summary.get('Name', '')
+            for insight in insight_selectors:
+                insight_type = insight.get('InsightType', '')
 
-                # Skip duplicates
-                if trail_arn in seen_trail_arns:
-                    continue
-                seen_trail_arns.add(trail_arn)
-
-                try:
-                    # Get insight selectors
-                    insights_response = ct_client.get_insight_selectors(TrailName=trail_name)
-
-                    insight_selectors = insights_response.get('InsightSelectors', [])
-
-                    for insight in insight_selectors:
-                        insight_type = insight.get('InsightType', '')
-
-                        all_insights.append({
-                            'Region': region,
-                            'Trail Name': trail_name,
-                            'Insight Type': insight_type
-                        })
-
-                except Exception as e:
-                    # Many trails don't have insight selectors, which is normal
-                    pass
+                insights_data.append({
+                    'Region': region,
+                    'Trail Name': trail_name,
+                    'Trail ARN': trail_arn,
+                    'Insight Type': insight_type
+                })
 
         except Exception as e:
-            utils.log_error(f"Error collecting insight selectors in region {region}", e)
+            # Many trails don't have insight selectors, which is normal
+            pass
 
-    utils.log_success(f"Total insight selectors collected: {len(all_insights)}")
+    utils.log_info(f"Found {len(insights_data)} insight selectors in {region}")
+    return insights_data
+
+
+def collect_insight_selectors(regions: List[str]) -> List[Dict[str, Any]]:
+    """
+    Collect CloudTrail insight selector information using concurrent scanning.
+
+    Args:
+        regions: List of AWS regions to scan
+
+    Returns:
+        list: List of dictionaries with insight selector information (deduplicated)
+    """
+    print("\n=== COLLECTING INSIGHT SELECTORS ===")
+    utils.log_info(f"Scanning {len(regions)} regions for insight selectors...")
+
+    # Use concurrent region scanning
+    region_results = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=collect_insight_selectors_from_region,
+        show_progress=True
+    )
+
+    # Flatten results and deduplicate by Trail ARN and Insight Type
+    all_insights = []
+    seen_combinations = set()
+
+    for insights_in_region in region_results:
+        for insight in insights_in_region:
+            trail_arn = insight.get('Trail ARN', '')
+            insight_type = insight.get('Insight Type', '')
+            combo_key = f"{trail_arn}:{insight_type}"
+
+            if combo_key not in seen_combinations:
+                seen_combinations.add(combo_key)
+                all_insights.append(insight)
+
+    utils.log_success(f"Total insight selectors collected (deduplicated): {len(all_insights)}")
     return all_insights
 
 
