@@ -739,82 +739,141 @@ def check_aws_permissions():
 
 def show_policy_recommendations(permission_results):
     """
-    Show AWS managed policy recommendations based on permission test results.
+    Show comprehensive policy recommendations including custom StratusScan policies.
 
     Args:
         permission_results (dict): Results from permission testing
     """
-    print("\n" + "=" * 50)
-    print("AWS MANAGED POLICY RECOMMENDATIONS")
-    print("=" * 50)
+    print("\n" + "=" * 70)
+    print("IAM POLICY RECOMMENDATIONS")
+    print("=" * 70)
 
-    policy_recommendations = get_aws_managed_policy_recommendations()
+    # Get the path to policy files
+    script_dir = Path(__file__).parent.absolute()
+    required_policy_path = script_dir / "policies" / "stratusscan-required-permissions.json"
+    optional_policy_path = script_dir / "policies" / "stratusscan-optional-permissions.json"
+    policies_readme_path = script_dir / "policies" / "README.md"
 
     # Check if user has required permissions
     has_required = permission_results.get('required_failed', 0) == 0
+    has_all_optional = permission_results.get('optional_failed', 0) == 0
+
+    if has_required and has_all_optional:
+        print("[SUCCESS] You have all required AND optional permissions!")
+        print("StratusScan is fully configured and ready to use.\n")
+        print("You can run the full suite of export scripts without restrictions.")
+        return
 
     if has_required:
-        print("[SUCCESS] You already have the required permissions!")
-        print("No additional policies needed for basic StratusScan functionality.")
+        print("[SUCCESS] You have all required permissions for basic StratusScan functionality!")
+        print("\nBasic features available:")
+        print("  - EC2, RDS, Lambda, ECS, EKS (Compute resources)")
+        print("  - S3, EBS, EFS, FSx (Storage resources)")
+        print("  - VPC, Load Balancers, Route 53 (Network resources)")
+        print("  - IAM, KMS, Secrets Manager (Security and identity)")
+        print("  - CloudWatch, CloudTrail, Config (Monitoring and compliance)")
 
-        # Check optional permissions
         if permission_results.get('optional_failed', 0) > 0:
-            print(f"\n[OPTIONAL] To enable all features, consider these policies:")
+            print("\n[OPTIONAL] Some advanced features are unavailable:")
+            failed_optional = [p for p, r in permission_results.get('detailed_results', {}).items()
+                             if not r['required'] and r['status'] != 'ALLOWED']
 
-            if 'ce:GetDimensionValues' in [p for p, r in permission_results.get('detailed_results', {}).items()
-                                          if r.get('status') != 'ALLOWED']:
-                print(f"\nFor Cost Analysis features:")
-                for policy in policy_recommendations['cost_management']['policies']:
-                    print(f"  - {policy}")
-                print(f"  Purpose: {policy_recommendations['cost_management']['description']}")
+            if any('securityhub' in p.lower() for p in failed_optional):
+                print("  - Security Hub findings and compliance reports")
+            if any('ce:' in p or 'cost' in p.lower() for p in failed_optional):
+                print("  - Cost Explorer and Cost Optimization Hub")
+            if any('support' in p.lower() for p in failed_optional):
+                print("  - Trusted Advisor recommendations (requires Business/Enterprise Support)")
+            if any('sso' in p.lower() or 'identity' in p.lower() for p in failed_optional):
+                print("  - IAM Identity Center (SSO) users and groups")
 
-            if any('sso' in p.lower() or 'identity' in p.lower() for p, r in permission_results.get('detailed_results', {}).items()
-                   if r.get('status') != 'ALLOWED'):
-                print(f"\nFor Identity Center features:")
-                for policy in policy_recommendations['identity_center']['policies']:
-                    print(f"  - {policy}")
-                print(f"  Purpose: {policy_recommendations['identity_center']['description']}")
+            print(f"\nTo enable these features:")
+            print(f"1. Review and copy policy from: {optional_policy_path}")
+            print(f"2. Create a custom IAM policy named 'StratusScanOptionalPermissions'")
+            print(f"3. Attach it to your IAM user or role")
+            print(f"\nFor detailed instructions, see: {policies_readme_path}")
     else:
-        print("[REQUIRED] You need additional permissions to run StratusScan.")
-        print("Choose ONE of these approaches:\n")
+        print("[REQUIRED] You are missing required permissions to run StratusScan.\n")
 
-        # Recommend primary approach
-        print("RECOMMENDED: Single comprehensive policy")
-        print("-" * 40)
+        # Show which required permissions are missing
+        failed_required = [p for p, r in permission_results.get('detailed_results', {}).items()
+                          if r['required'] and r['status'] != 'ALLOWED']
+
+        if failed_required:
+            print("Missing required permissions:")
+            for perm in failed_required[:5]:  # Show first 5
+                print(f"  - {perm}")
+            if len(failed_required) > 5:
+                print(f"  ... and {len(failed_required) - 5} more")
+
+        print("\n" + "=" * 70)
+        print("RECOMMENDED SOLUTION: Use StratusScan Custom Policies")
+        print("=" * 70)
+        print("\nWe provide ready-to-use IAM policy JSON files optimized for StratusScan:")
+        print("")
+        print("Option 1: CUSTOM POLICIES (Recommended - Least Privilege)")
+        print("-" * 70)
+        print(f"Required Policy: {required_policy_path}")
+        print("  - Covers 100+ export scripts across 80+ AWS services")
+        print("  - Read-only permissions only (Get*, Describe*, List*)")
+        print("  - ~250 specific actions for precise access control")
+        print("")
+        print(f"Optional Policy: {optional_policy_path}")
+        print("  - Advanced features: Security Hub, Cost Optimization, Trusted Advisor")
+        print("  - IAM Identity Center (SSO), Compute Optimizer, Health Dashboard")
+        print("  - ~60 additional actions for optional functionality")
+        print("")
+        print("How to apply custom policies:")
+        print("  1. Open the policy file and copy the JSON content")
+        print("  2. Go to IAM Console > Policies > Create policy")
+        print("  3. Paste JSON, name it 'StratusScanRequiredPermissions'")
+        print("  4. Attach policy to your IAM user or role")
+        print(f"  5. See detailed instructions: {policies_readme_path}")
+
+        print("\n" + "-" * 70)
+        print("Option 2: AWS MANAGED POLICIES (Simpler but broader permissions)")
+        print("-" * 70)
+
+        policy_recommendations = get_aws_managed_policy_recommendations()
+
+        print("\nPrimary managed policy (covers most needs):")
         for policy in policy_recommendations['core_permissions']['policies']:
-            print(f"• {policy}")
-        print(f"Benefits: {policy_recommendations['core_permissions']['description']}")
-        print(f"Priority: {policy_recommendations['core_permissions']['priority']}")
-        print(f"Reason: {policy_recommendations['core_permissions']['reason']}\n")
+            print(f"  - {policy}")
+        print(f"    {policy_recommendations['core_permissions']['description']}")
 
-        # Alternative approach
-        print("ALTERNATIVE: Multiple service-specific policies")
-        print("-" * 40)
+        print("\nAlternative managed policies (more granular):")
         for policy in policy_recommendations['alternative_minimal']['policies']:
-            print(f"• {policy}")
-        print(f"Benefits: {policy_recommendations['alternative_minimal']['description']}")
-        print(f"Priority: {policy_recommendations['alternative_minimal']['priority']}")
-        print(f"Reason: {policy_recommendations['alternative_minimal']['reason']}\n")
+            print(f"  - {policy}")
+        print(f"    {policy_recommendations['alternative_minimal']['description']}")
 
-        # Additional policies
-        print("ADDITIONAL: Enhanced features (optional)")
-        print("-" * 40)
-        for category in ['cost_management', 'security_services']:
+        print("\nAdditional managed policies for optional features:")
+        for category in ['cost_management', 'security_services', 'identity_center']:
             info = policy_recommendations[category]
             for policy in info['policies']:
-                print(f"• {policy}")
-            print(f"  Purpose: {info['description']}\n")
+                print(f"  - {policy}")
+            print(f"    {info['description']}")
 
-    print("=" * 50)
-    print("HOW TO ATTACH POLICIES")
-    print("=" * 50)
-    print("1. Go to the AWS IAM Console")
-    print("2. Navigate to Users or Roles (depending on your authentication method)")
-    print("3. Select your user/role")
-    print("4. Click 'Add permissions' > 'Attach policies directly'")
-    print("5. Search for and select the recommended managed policies above")
-    print("6. Click 'Add permissions' to apply")
-    print("\nNote: These are all AWS managed policies - no custom policies needed!")
+    print("\n" + "=" * 70)
+    print("NEXT STEPS")
+    print("=" * 70)
+
+    if has_required:
+        print("1. (Optional) Review optional permissions policy")
+        print(f"   Location: {optional_policy_path}")
+        print("2. Create and attach the optional policy if needed")
+        print("3. Re-run permission check: python configure.py --perms")
+    else:
+        print("1. Review the required permissions policy")
+        print(f"   Location: {required_policy_path}")
+        print("2. Create a custom IAM policy with the JSON content")
+        print("3. Attach the policy to your IAM user or role")
+        print("4. Re-run permission check: python configure.py --perms")
+        print("")
+        print("OR use AWS managed policies (ReadOnlyAccess, SecurityAudit, etc.)")
+
+    print("\nFor complete documentation and troubleshooting:")
+    print(f"  {policies_readme_path}")
+    print("=" * 70)
 
 def permissions_management_menu():
     """
@@ -828,35 +887,49 @@ def permissions_management_menu():
         has_required, results = check_aws_permissions()
 
         print(f"\n[OPTIONS] Permissions Management Options:")
-        print("1. Show AWS managed policy recommendations")
-        print("2. Re-test permissions (after applying policies)")
-        print("3. Continue with current permissions")
+        print("1. Show policy recommendations and next steps")
+        print("2. View StratusScan policy file locations")
+        print("3. Re-test permissions (after applying policies)")
         print("4. Show detailed permission test results")
+        print("5. Continue with current permissions")
 
-        choice = input("\nSelect an option (1-4): ").strip()
+        choice = input("\nSelect an option (1-5): ").strip()
 
         if choice == '1':
             show_policy_recommendations(results)
             continue
 
         elif choice == '2':
-            print(f"\nRe-testing permissions...")
+            # Show policy file locations
+            script_dir = Path(__file__).parent.absolute()
+            print("\n" + "=" * 70)
+            print("STRATUSSCAN POLICY FILES")
+            print("=" * 70)
+            print("\nRequired Permissions Policy (Core Functionality):")
+            print(f"  {script_dir / 'policies' / 'stratusscan-required-permissions.json'}")
+            print("  Covers: EC2, S3, RDS, VPC, IAM, Lambda, and 70+ other services")
+            print("  Actions: ~250 read-only permissions")
+            print("")
+            print("Optional Permissions Policy (Advanced Features):")
+            print(f"  {script_dir / 'policies' / 'stratusscan-optional-permissions.json'}")
+            print("  Covers: Security Hub, Cost Optimization, Trusted Advisor, Identity Center")
+            print("  Actions: ~60 read-only permissions")
+            print("")
+            print("Complete Documentation:")
+            print(f"  {script_dir / 'policies' / 'README.md'}")
+            print("  Includes: Usage instructions, troubleshooting, GovCloud considerations")
+            print("=" * 70)
             continue
 
         elif choice == '3':
-            if not has_required:
-                print(f"\n[WARNING] Continuing without all required permissions!")
-                print("StratusScan scripts may encounter errors or produce incomplete results.")
-                confirm = input("Are you sure you want to continue? (y/n): ").lower().strip()
-                if confirm != 'y':
-                    continue
-            return has_required
+            print(f"\nRe-testing permissions...")
+            continue
 
         elif choice == '4':
             # Show detailed results
             detailed = results.get('detailed_results', {})
             print(f"\n[DETAILS] Complete Permission Test Results:")
-            print("-" * 50)
+            print("-" * 70)
 
             for permission, result in detailed.items():
                 print(f"Permission: {permission}")
@@ -869,8 +942,17 @@ def permissions_management_menu():
                 print()
             continue
 
+        elif choice == '5':
+            if not has_required:
+                print(f"\n[WARNING] Continuing without all required permissions!")
+                print("StratusScan scripts may encounter errors or produce incomplete results.")
+                confirm = input("Are you sure you want to continue? (y/n): ").lower().strip()
+                if confirm != 'y':
+                    continue
+            return has_required
+
         else:
-            print("Invalid choice. Please select 1-4.")
+            print("Invalid choice. Please select 1-5.")
             continue
 
 def main():
