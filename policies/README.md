@@ -1,346 +1,189 @@
-# StratusScan IAM Permissions Guide
+# StratusScan IAM Policies
 
-This directory contains IAM policy documents for StratusScan, a defensive AWS security auditing tool that performs read-only resource scanning and exports across your AWS environment.
+This directory contains IAM policies for StratusScan across AWS Commercial and GovCloud partitions.
 
-## Overview
+## Policy Files
 
-StratusScan requires specific AWS IAM permissions to scan and export resource information from your AWS accounts. We provide two policy documents to support different levels of functionality:
+### AWS Commercial (Partition: `aws`)
 
-- **stratusscan-required-permissions.json** - Core permissions for basic StratusScan functionality
-- **stratusscan-optional-permissions.json** - Advanced features (Security Hub, Cost Optimization, Trusted Advisor, etc.)
+- **`commercial-required-permissions.json`** - Core permissions required for StratusScan functionality
+  - 15 statement blocks
+  - 230 total actions
+  - Services: Compute, Storage, Database, Network, IAM, Security, Monitoring, Application, DevTools, Data Analytics, Management, Messaging, Licensing, Organizations, Access Management
+  
+- **`commercial-optional-permissions.json`** - Optional permissions for advanced features
+  - 4 statement blocks
+  - 38 total actions
+  - Services: ML/AI (SageMaker, Bedrock, Comprehend, Rekognition), Global Edge (CloudFront, Global Accelerator), Mobile/Marketing (Pinpoint), Marketplace
 
-## Quick Start
+### AWS GovCloud (Partition: `aws-us-gov`)
 
-### Option 1: For IAM Users/Roles (Recommended for most users)
+- **`govcloud-required-permissions.json`** - Core permissions required for StratusScan functionality in GovCloud
+  - 15 statement blocks
+  - 230 total actions
+  - **Differences from Commercial Required:**
+    - REMOVED: `globalaccelerator:*` permissions (service not available in GovCloud)
+    - REMOVED: `cloudfront:*` permissions (operates outside GovCloud boundary, ITAR concerns)
+  - Compliance: FedRAMP High, DoD SRG IL-2/4/5, FIPS 140-3, ITAR compliant
 
-1. **Check your current permissions**:
-   ```bash
-   python configure.py --perms
-   ```
+- **`govcloud-optional-permissions.json`** - Optional permissions for advanced features in GovCloud
+  - 3 statement blocks
+  - 34 total actions
+  - **Differences from Commercial Optional:**
+    - REMOVED: `globalaccelerator:*` permissions (not available)
+    - REMOVED: `cloudfront:*` permissions (outside GovCloud boundary)
+    - INCLUDES: Bedrock permissions (available as of November 2024)
+  - Services: ML/AI (SageMaker, Bedrock, Comprehend, Rekognition), Mobile/Marketing (Pinpoint), Marketplace (limited)
 
-2. **Copy the required policy**:
-   - Open `stratusscan-required-permissions.json`
-   - Copy the entire JSON content
+### Legacy Unified Policies (Deprecated)
 
-3. **Create a custom IAM policy**:
-   - Go to [IAM Policies Console](https://console.aws.amazon.com/iam/home#/policies)
-   - Click "Create policy" > "JSON" tab
-   - Paste the policy JSON
-   - Click "Next: Tags" > "Next: Review"
-   - Name it: `StratusScanRequiredPermissions`
-   - Click "Create policy"
+- **`stratusscan-required-permissions.json`** - Original combined policy (Commercial-focused)
+- **`stratusscan-optional-permissions.json`** - Original optional policy (Commercial-focused)
 
-4. **Attach the policy to your IAM user or role**:
-   - Go to [IAM Users](https://console.aws.amazon.com/iam/home#/users) or [IAM Roles](https://console.aws.amazon.com/iam/home#/roles)
-   - Select your user/role
-   - Click "Add permissions" > "Attach policies directly"
-   - Search for `StratusScanRequiredPermissions`
-   - Click "Add permissions"
+**Note**: The legacy policies combine both required and optional permissions without partition-specific adjustments. Use the partition-specific policies for production deployments.
 
-5. **Optional: Add advanced features**:
-   - Repeat steps 2-4 with `stratusscan-optional-permissions.json`
-   - Name it: `StratusScanOptionalPermissions`
+## IAM vs IAM Identity Center Compatibility
 
-### Option 2: For AWS IAM Identity Center (SSO) Users
+All policies in this directory are compatible with both:
+- **IAM**: Attach to IAM users or roles
+- **IAM Identity Center**: Use in permission sets
 
-1. **Check your current permissions**:
-   ```bash
-   python configure.py --perms
-   ```
+No separate versions are needed - the permission formats are identical.
 
-2. **Create custom permission sets**:
-   - Go to [IAM Identity Center Console](https://console.aws.amazon.com/singlesignon/home)
-   - Click "Permission sets" > "Create permission set"
-   - Select "Create a custom permission set"
-   - Click "Next"
+## Usage Recommendations
 
-3. **Add inline policy for required permissions**:
-   - In "Inline policy" section, click "Create inline policy"
-   - Switch to JSON editor
-   - Copy and paste contents of `stratusscan-required-permissions.json`
-   - Click "Next"
-   - Name the permission set: `StratusScanRequired`
-   - Set session duration (recommended: 8-12 hours)
-   - Click "Create"
+### For AWS Commercial
 
-4. **Optional: Create permission set for advanced features**:
-   - Repeat steps 2-3 with `stratusscan-optional-permissions.json`
-   - Name it: `StratusScanOptional`
-
-5. **Assign permission sets to users/groups**:
-   - Go to "AWS accounts" in Identity Center
-   - Select your account
-   - Click "Assign users or groups"
-   - Select your user/group
-   - Select the permission sets you created
-   - Click "Submit"
-
-### Option 3: Use AWS Managed Policies (Simpler but broader permissions)
-
-If you prefer using AWS-managed policies instead of custom policies:
-
-**Recommended managed policy**:
-- `ReadOnlyAccess` - Provides comprehensive read-only access to most AWS services
-
-**Alternative managed policies** (more granular, require multiple attachments):
-- `AmazonEC2ReadOnlyAccess`
-- `AmazonS3ReadOnlyAccess`
-- `AmazonRDSReadOnlyAccess`
-- `AmazonVPCReadOnlyAccess`
-- `IAMReadOnlyAccess`
-- `CloudWatchReadOnlyAccess`
-- `AWSCloudTrailReadOnlyAccess`
-- `SecurityAudit`
-
-**For optional features**:
-- `AWSSupportAccess` (for Trusted Advisor)
-- `AWSBillingReadOnlyAccess` (for Cost Explorer)
-- `AWSSSOReadOnly` (for Identity Center)
-
-**Note**: Managed policies may grant broader permissions than strictly necessary. For production environments, consider using the custom policies provided in this directory for least-privilege access.
-
-## Policy Details
-
-### Required Permissions Policy
-
-**File**: `stratusscan-required-permissions.json`
-
-**Coverage**: This policy covers the core StratusScan functionality for 100+ export scripts across:
-
-- **Compute**: EC2, ECS, EKS, Lambda, Auto Scaling, Elastic Beanstalk
-- **Storage**: S3, EBS, EFS, FSx, Glacier, Storage Gateway, Backup
-- **Database**: RDS, DynamoDB, ElastiCache, Redshift, Neptune, DocumentDB, MemoryDB
-- **Network**: VPC, Load Balancers, Route 53, CloudFront, Direct Connect, Global Accelerator, Network Firewall
-- **IAM & Security**: IAM, KMS, Secrets Manager, ACM, WAF, Shield, GuardDuty, CloudTrail, Config, Access Analyzer, Detective, Macie
-- **Monitoring**: CloudWatch, CloudWatch Logs, X-Ray
-- **Applications**: API Gateway, AppSync, App Runner, Cognito, SNS, SQS, EventBridge, Step Functions
-- **DevOps**: CodeCommit, CodeBuild, CodeDeploy, CodePipeline
-- **Data Analytics**: Glue, Athena, Lake Formation, OpenSearch
-- **ML/AI**: SageMaker, Bedrock, Comprehend, Rekognition
-- **Management**: CloudFormation, Systems Manager, Service Catalog, Image Builder, DataSync, Transfer Family
-- **Organizations**: AWS Organizations
-- **Other**: SES, Pinpoint, License Manager, Marketplace, Verified Access, IAM Roles Anywhere
-
-**Total Permissions**: ~250 read-only actions across 80+ AWS services
-
-**Actions Included**: All actions use read-only patterns:
-- `Get*` - Retrieve individual resource details
-- `List*` - List resources
-- `Describe*` - Get resource descriptions
-- `BatchGet*` - Batch retrieve resources
-
-**No Write Permissions**: This policy contains ZERO write, modify, or delete actions. It is safe for audit and compliance use cases.
-
-### Optional Permissions Policy
-
-**File**: `stratusscan-optional-permissions.json`
-
-**Coverage**: Advanced features that are optional or may not be available in all AWS environments:
-
-- **Security Hub**: Full Security Hub findings and compliance status
-- **Cost Management**: Cost Explorer, Cost Optimization Hub, Budgets, Cost & Usage Reports, Savings Plans
-- **Trusted Advisor**: AWS Support API for Trusted Advisor recommendations (requires Business/Enterprise Support)
-- **Compute Optimizer**: ML-powered optimization recommendations
-- **Identity Center**: AWS IAM Identity Center (SSO) users, groups, and permission sets
-- **Health**: AWS Health Dashboard and Personal Health Dashboard
-- **Reserved Instances**: Reserved capacity across EC2, RDS, ElastiCache, Redshift, OpenSearch
-- **Capacity Reservations**: EC2 Capacity Reservations and Dedicated Hosts
-
-**Total Permissions**: ~60 read-only actions across 8+ AWS services
-
-**Why Optional**:
-- Some services require additional AWS support plans (e.g., Trusted Advisor requires Business/Enterprise)
-- Some services are only available in AWS Commercial (not GovCloud)
-- Some organizations may not use these services
-
-## Permission Checking
-
-StratusScan includes a built-in permission checker to validate your IAM permissions:
-
+**Minimum (Core Functionality)**:
 ```bash
-# Check permissions only
-python configure.py --perms
+# Attach only required permissions
+aws iam attach-role-policy \
+  --role-name StratusScanRole \
+  --policy-arn arn:aws:iam::123456789012:policy/StratusScanCommercialRequired
 ```
 
-The permission checker will:
-1. Identify your AWS identity (user/role)
-2. Test required permissions by calling AWS APIs
-3. Test optional permissions
-4. Display missing permissions grouped by category
-5. Provide guidance on which policy file to use
+**Full Functionality**:
+```bash
+# Attach both required and optional permissions
+aws iam attach-role-policy \
+  --role-name StratusScanRole \
+  --policy-arn arn:aws:iam::123456789012:policy/StratusScanCommercialRequired
 
-**Sample Output**:
-```
-===================================================
-AWS PERMISSIONS CHECK
-===================================================
-Testing AWS permissions for StratusScan operations...
-
-AWS Identity: arn:aws:iam::123456789012:user/security-auditor
-Account ID: 123456789012
-
-Testing individual permissions...
-
-Permission Test Results:
---------------------------------------------------
-[OK] sts:GetCallerIdentity (REQUIRED)
-    Service: AWS Security Token Service
-    Purpose: Basic AWS authentication verification
-
-[OK] ec2:DescribeInstances (REQUIRED)
-    Service: Amazon EC2
-    Purpose: List EC2 instances for compute resource scanning
-
-[DENIED] ce:GetDimensionValues (OPTIONAL)
-    Service: AWS Cost Explorer
-    Purpose: Access cost data for comprehensive service discovery
-    Error: AccessDenied
-
-===================================================
-PERMISSIONS SUMMARY
-===================================================
-Required permissions: 6/6 passed
-Optional permissions: 2/4 passed
-
-[SUCCESS] All required permissions are available!
-[INFO] 2 optional permissions are missing.
-Some advanced features may not be available.
-
-[OPTIONS] Permissions Management Options:
-1. Show AWS managed policy recommendations
-2. Re-test permissions (after applying policies)
-3. Continue with current permissions
-4. Show detailed permission test results
+aws iam attach-role-policy \
+  --role-name StratusScanRole \
+  --policy-arn arn:aws:iam::123456789012:policy/StratusScanCommercialOptional
 ```
 
-## GovCloud Considerations
+### For AWS GovCloud
 
-Both policy documents are designed for AWS Commercial but are compatible with AWS GovCloud with these caveats:
+**Minimum (Core Functionality)**:
+```bash
+# Attach only required permissions (GovCloud-specific)
+aws iam attach-role-policy \
+  --role-name StratusScanRole \
+  --policy-arn arn:aws-us-gov:iam::123456789012:policy/StratusScanGovCloudRequired
+```
 
-**Services NOT available in GovCloud**:
-- AWS Trusted Advisor (Business/Enterprise Support API)
-- AWS Cost Optimization Hub
-- Some AWS Marketplace services
-- Some newer AI/ML services
+**Full Functionality**:
+```bash
+# Attach both required and optional permissions (GovCloud-specific)
+aws iam attach-role-policy \
+  --role-name StratusScanRole \
+  --policy-arn arn:aws-us-gov:iam::123456789012:policy/StratusScanGovCloudRequired
 
-**Services with different ARN formats in GovCloud**:
-- All ARNs use `aws-us-gov` partition instead of `aws`
-- StratusScan automatically detects and handles partition differences
+aws iam attach-role-policy \
+  --role-name StratusScanRole \
+  --policy-arn arn:aws-us-gov:iam::123456789012:policy/StratusScanGovCloudOptional
+```
 
-**Recommendations for GovCloud**:
-1. Use the required permissions policy as-is
-2. For optional permissions, remove Trusted Advisor and Cost Optimization Hub sections if needed
-3. Validate service availability using `python configure.py --perms`
+## Key Differences: Commercial vs GovCloud
 
-## Security Best Practices
+### Services NOT Available in GovCloud
 
-1. **Least Privilege**: These policies follow AWS least-privilege principles by granting only read-only access
-2. **No Secrets in Exports**: StratusScan automatically sanitizes sensitive data in exports (see `utils.sanitize_for_export()`)
-3. **Audit Regularly**: Review IAM policies quarterly and remove unused permissions
-4. **Use IAM Roles**: For EC2-based deployments, use IAM instance roles instead of IAM users
-5. **MFA Protection**: Enable MFA for IAM users with these permissions
-6. **Session Duration**: For Identity Center, set appropriate session durations (4-12 hours recommended)
+1. **AWS Global Accelerator** - Not available in GovCloud, not expanding to GovCloud
+   - Alternative: Use Route 53 with health checks and latency-based routing
 
-## Troubleshooting
+2. **Amazon CloudFront** - Operates outside GovCloud boundary
+   - Status: Being Planned for GovCloud regions
+   - Current: Can be used with GovCloud origins but operates in commercial regions
+   - ITAR Concern: CloudFront processes data outside GovCloud boundary
+   - Recommendation: Exclude for ITAR-controlled data
 
-### "Access Denied" errors during scanning
+### GovCloud Service Limitations
 
-**Symptom**: Scripts fail with `AccessDenied` or `UnauthorizedOperation` errors
+**Amazon S3**:
+- No S3 Transfer Acceleration
+- No S3 Storage Lens
+- No S3 Express One Zone
+- No S3 Tables, S3 Metadata
+- No MFA Delete
+- Limited Multi-Region Access Points functionality
 
-**Solutions**:
-1. Run `python configure.py --perms` to identify missing permissions
-2. Verify the policy is attached to your IAM user/role
-3. Check if SCPs (Service Control Policies) are blocking access at the organization level
-4. Verify you're using the correct AWS profile: `aws sts get-caller-identity`
+**Amazon CloudWatch**:
+- No Transaction Search
+- No GetMetricWidgetImage API
+- No dashboard sharing
+- No Trusted Advisor metrics alarms
+- No cross-account observability
 
-### "No credentials found" errors
+**AWS Marketplace**:
+- Limited catalog (fewer products than commercial)
+- No container products
+- No ML products
+- Cannot launch from AWS Marketplace website with GovCloud account
+- No Service Catalog integration
 
-**Symptom**: `NoCredentialsError: Unable to locate credentials`
+**AWS Trusted Advisor**:
+- Limited checks compared to commercial regions
+- Cannot change severity of existing support cases
 
-**Solutions**:
-1. Configure AWS credentials:
-   ```bash
-   # For IAM users
-   aws configure
+### Services Available in GovCloud
 
-   # For IAM Identity Center
-   aws configure sso
-   aws sso login
-   ```
-2. Set AWS profile environment variable:
-   ```bash
-   export AWS_PROFILE=your-profile-name
-   ```
+**Amazon Bedrock** (as of November 2024):
+- Available in us-gov-west-1 and us-gov-east-1
+- FedRAMP High authorized
+- DoD IL-4/5 authorized
+- Models: Claude 3.5 Sonnet, Claude 3 (Sonnet/Haiku/Opus), Llama 3/3.1/3.2, Amazon Titan
 
-### Trusted Advisor checks fail
+All other services in the required permissions are fully available in GovCloud.
 
-**Symptom**: `SubscriptionRequiredException` when running Trusted Advisor scripts
+## Compliance Notes
 
-**Cause**: Trusted Advisor API requires AWS Business or Enterprise Support plan
+### AWS GovCloud Compliance
 
-**Solutions**:
-1. Upgrade to Business/Enterprise Support (if needed for your use case)
-2. Skip Trusted Advisor scripts (they're in the optional permissions)
-3. Use AWS Console for basic Trusted Advisor checks (available on free tier)
+- **FedRAMP High**: All services support FedRAMP High baseline
+- **DoD SRG**: Many services have DoD Cloud Computing SRG Impact Level 2, 4, and 5 authorization
+- **FIPS 140-3**: All service endpoints use FIPS 140-3 approved cryptographic modules
+- **ITAR**: All services operate within GovCloud boundary (except CloudFront/Global Accelerator which are excluded)
 
-### Identity Center permission errors
+### Best Practices
 
-**Symptom**: `AccessDenied` when scanning Identity Center resources
+1. **Least Privilege**: Start with required permissions only, add optional as needed
+2. **Partition Awareness**: Always use partition-specific policies (commercial vs govcloud)
+3. **Regular Audits**: Review permissions quarterly for unused services
+4. **Compliance**: For ITAR workloads in GovCloud, do NOT add CloudFront permissions
+5. **Testing**: Validate permissions in non-production environments first
 
-**Cause**: Identity Center permissions require both `sso-admin` and `identitystore` actions
+## Policy Validation
 
-**Solutions**:
-1. Ensure `stratusscan-optional-permissions.json` is attached
-2. Verify you have access to the Identity Center instance
-3. Confirm the Identity Center instance exists in your account
+All policies have been validated for:
+- Valid JSON syntax
+- Correct IAM action names
+- Service prefix accuracy
+- Compatibility with IAM and IAM Identity Center
 
-### Region-specific errors
+## Support
 
-**Symptom**: Service not available in selected region
+For issues or questions:
+1. Review GovCloud service availability: https://docs.aws.amazon.com/govcloud-us/latest/UserGuide/using-services.html
+2. Check GovCloud service analysis: `/govcloud-service-analysis.json`
+3. Open an issue in the StratusScan repository
 
-**Solutions**:
-1. Some services are only available in specific regions (e.g., Trusted Advisor in us-east-1)
-2. Check service availability: https://aws.amazon.com/about-aws/global-infrastructure/regional-product-services/
-3. Update `config.json` with correct regions for each service
+## Version History
 
-## IAM Policy Maintenance
+- **2025-11-19**: Created partition-specific policies (commercial vs govcloud)
+  - Split required vs optional permissions
+  - Added GovCloud compliance metadata
+  - Documented service availability differences
+  - Added Bedrock support for GovCloud (Nov 2024 release)
 
-### When to update policies
-
-Update your IAM policies when:
-- New StratusScan scripts are added (check release notes)
-- AWS introduces new services or APIs
-- Your security requirements change
-- Permission errors occur during scanning
-
-### How to update policies
-
-1. Pull latest StratusScan code:
-   ```bash
-   git pull origin main
-   ```
-
-2. Review updated policy files in `policies/` directory
-
-3. Update your custom IAM policies:
-   - Go to IAM Policies Console
-   - Select your custom policy
-   - Click "Edit policy" > "JSON"
-   - Replace with updated policy content
-   - Click "Review policy" > "Save changes"
-
-4. Re-test permissions:
-   ```bash
-   python configure.py --perms
-   ```
-
-## Support and Resources
-
-- **StratusScan Documentation**: See `CLAUDE.md` in project root
-- **AWS IAM Documentation**: https://docs.aws.amazon.com/IAM/latest/UserGuide/
-- **AWS IAM Identity Center**: https://docs.aws.amazon.com/singlesignon/latest/userguide/
-- **AWS Policy Simulator**: https://policysim.aws.amazon.com/
-
-## License
-
-These IAM policies are part of the StratusScan project and are provided as-is for AWS security auditing and compliance purposes.

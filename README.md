@@ -2,7 +2,8 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL%203.0-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![AWS](https://img.shields.io/badge/AWS-Commercial-orange.svg)](https://aws.amazon.com/)
+[![AWS Commercial](https://img.shields.io/badge/AWS-Commercial-orange.svg)](https://aws.amazon.com/)
+[![AWS GovCloud](https://img.shields.io/badge/AWS-GovCloud%20(US)-blue.svg)](https://aws.amazon.com/govcloud-us/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 > A professional AWS resource export tool for multi-account, multi-region environments. Export detailed AWS infrastructure data to Excel with built-in cost estimation and intelligent optimization recommendations.
@@ -211,11 +212,46 @@ After running multiple exports, create a zip archive:
 
 ## 🔐 AWS Permissions
 
-StratusScan requires **read-only** access to AWS resources.
+StratusScan requires **read-only** access to AWS resources. We provide purpose-built IAM policies for both **AWS Commercial** and **AWS GovCloud (US)** environments.
 
-### Recommended IAM Policies
+### Recommended Approach: Custom StratusScan Policies
 
-Attach these AWS managed policies to your IAM user/role:
+Choose the policy combination that matches your environment and requirements:
+
+#### AWS Commercial
+
+**Minimum Required:**
+- [`policies/commercial-required-permissions.json`](policies/commercial-required-permissions.json) - Core StratusScan functionality (230 actions)
+
+**Full Featured (Recommended):**
+- [`policies/commercial-required-permissions.json`](policies/commercial-required-permissions.json) - Core functionality
+- [`policies/commercial-optional-permissions.json`](policies/commercial-optional-permissions.json) - ML/AI, CloudFront, Global Accelerator (38 actions)
+
+#### AWS GovCloud (US)
+
+**Minimum Required:**
+- [`policies/govcloud-required-permissions.json`](policies/govcloud-required-permissions.json) - Core functionality (FedRAMP High compliant)
+
+**Full Featured (Recommended):**
+- [`policies/govcloud-required-permissions.json`](policies/govcloud-required-permissions.json) - Core functionality
+- [`policies/govcloud-optional-permissions.json`](policies/govcloud-optional-permissions.json) - ML/AI including Bedrock (34 actions)
+
+**Key Differences for GovCloud:**
+- ❌ Global Accelerator not available (use Route53 latency-based routing)
+- ⚠️ CloudFront operates outside ITAR boundary (not included for compliance)
+- ✅ All core services fully supported including Bedrock (as of November 2024)
+- 🔐 FedRAMP High, DoD SRG IL-2/4/5, FIPS 140-3 compliant
+
+### IAM vs IAM Identity Center
+
+All policies work in **both IAM and IAM Identity Center** with no modifications needed. They have been validated for compatibility with both systems.
+
+**For IAM:** Attach policies to IAM users, roles, or groups
+**For IAM Identity Center:** Use as inline policies in Permission Sets
+
+### Alternative: AWS Managed Policies
+
+For quick setup, you can use AWS managed policies (less granular control):
 
 - `ReadOnlyAccess` - General resource access
 - `IAMReadOnlyAccess` - IAM resources
@@ -223,9 +259,11 @@ Attach these AWS managed policies to your IAM user/role:
 - `ComputeOptimizerReadOnlyAccess` - Compute Optimizer recommendations
 - `CostOptimizationHubReadOnlyAccess` - Cost recommendations
 
-### Custom IAM Policy
+### Documentation
 
-For fine-grained control, see our [custom IAM policy template](https://github.com/ColonelPanicX/StratusScan-CLI/wiki/IAM-Permissions) in the wiki.
+For detailed policy information, implementation guides, and service limitations:
+- **[Policies README](policies/README.md)** - Complete policy documentation
+- **[Quick Start Guide](policies/QUICK-START.md)** - Fast implementation instructions
 
 ---
 
@@ -436,4 +474,4 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 
 For questions, issues, or feature requests, please open an issue on GitHub.
 
-**Note**: This tool is designed for AWS Commercial environments. Always verify compliance with your organization's security policies and applicable regulations before use.
+**Note**: StratusScan supports both **AWS Commercial** and **AWS GovCloud (US)** environments with 96.8% service compatibility. Always verify compliance with your organization's security policies and applicable regulations (FedRAMP, ITAR, etc.) before use.

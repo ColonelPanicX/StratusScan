@@ -1,4 +1,10 @@
 {
+  "_comment": "StratusScan Required Permissions - AWS Commercial",
+  "_description": "Core permissions required for StratusScan functionality in AWS Commercial (aws partition). This policy includes all essential services for compute, storage, database, network, IAM, security, monitoring, application, devtools, data analytics, management, messaging, licensing, organizations, and access management operations. Compatible with both IAM and IAM Identity Center.",
+  "_partition": "aws",
+  "_regions": "All AWS Commercial regions",
+  "_compliance": "Production-ready IAM policy for read-only security auditing",
+  "_usage": "Attach to IAM users, roles, or Identity Center permission sets for core StratusScan functionality",
   "Version": "2012-10-17",
   "Statement": [
     {
@@ -97,11 +103,7 @@
         "route53:List*",
         "route53resolver:Get*",
         "route53resolver:List*",
-        "cloudfront:Get*",
-        "cloudfront:List*",
         "directconnect:Describe*",
-        "globalaccelerator:Describe*",
-        "globalaccelerator:List*",
         "networkmanager:Describe*",
         "networkmanager:Get*",
         "networkmanager:List*",
@@ -256,36 +258,6 @@
       "Resource": "*"
     },
     {
-      "Sid": "StratusScanCoreMLAIPermissions",
-      "Effect": "Allow",
-      "Action": [
-        "sagemaker:Describe*",
-        "sagemaker:List*",
-        "sagemaker:Get*",
-        "bedrock:Get*",
-        "bedrock:List*",
-        "bedrock:GetAgent",
-        "bedrock:GetAgentAlias",
-        "bedrock:GetAgentKnowledgeBase",
-        "bedrock:GetAgentVersion",
-        "bedrock:GetDataSource",
-        "bedrock:GetKnowledgeBase",
-        "bedrock:ListAgentActionGroups",
-        "bedrock:ListAgentAliases",
-        "bedrock:ListAgentKnowledgeBases",
-        "bedrock:ListAgents",
-        "bedrock:ListAgentVersions",
-        "bedrock:ListDataSources",
-        "bedrock:ListKnowledgeBases",
-        "bedrock:ListTagsForResource",
-        "comprehend:Describe*",
-        "comprehend:List*",
-        "rekognition:Describe*",
-        "rekognition:List*"
-      ],
-      "Resource": "*"
-    },
-    {
       "Sid": "StratusScanCoreManagementPermissions",
       "Effect": "Allow",
       "Action": [
@@ -331,14 +303,7 @@
         "ses:ListEmailIdentities",
         "ses:ListEmailTemplates",
         "ses:ListSuppressedDestinations",
-        "ses:ListTagsForResource",
-        "mobiletargeting:GetApp",
-        "mobiletargeting:GetApplicationSettings",
-        "mobiletargeting:GetCampaign",
-        "mobiletargeting:GetEmailChannel",
-        "mobiletargeting:GetSegment",
-        "mobiletargeting:GetSmsChannel",
-        "mobiletargeting:ListTagsForResource"
+        "ses:ListTagsForResource"
       ],
       "Resource": "*"
     },
@@ -347,11 +312,7 @@
       "Effect": "Allow",
       "Action": [
         "license-manager:Get*",
-        "license-manager:List*",
-        "aws-marketplace:DescribeEntity",
-        "aws-marketplace:ListEntities",
-        "aws-marketplace:ListChangeSets",
-        "aws-marketplace:ViewSubscriptions"
+        "license-manager:List*"
       ],
       "Resource": "*"
     },

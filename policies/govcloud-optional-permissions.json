@@ -1,0 +1,85 @@
+{
+  "_comment": "StratusScan Optional Permissions - AWS GovCloud",
+  "_description": "Optional permissions for advanced StratusScan features in AWS GovCloud (us) partition. This policy adds support for ML/AI services (SageMaker, Bedrock, Comprehend, Rekognition) and mobile/marketing services (Pinpoint, AWS Marketplace). CloudFront and Global Accelerator permissions are excluded (not available in GovCloud). These permissions are additive to the required permissions and can be combined. Compatible with both IAM and IAM Identity Center.",
+  "_partition": "aws-us-gov",
+  "_regions": ["us-gov-west-1", "us-gov-east-1"],
+  "_compliance": [
+    "FedRAMP High authorized",
+    "DoD Cloud Computing SRG Impact Level 4 and 5",
+    "FIPS 140-3 approved cryptographic modules",
+    "ITAR compliant - all services operate within GovCloud boundary"
+  ],
+  "_usage": "Attach to IAM users, roles, or Identity Center permission sets alongside govcloud-required-permissions.json for full StratusScan functionality",
+  "_differences_from_commercial": [
+    "REMOVED: globalaccelerator permissions (service not available in GovCloud)",
+    "REMOVED: cloudfront permissions (operates outside GovCloud boundary, ITAR concerns)",
+    "ADDED: Bedrock permissions (available as of November 2024 in GovCloud)",
+    "LIMITATION: AWS Marketplace has limited catalog in GovCloud (no container or ML products)"
+  ],
+  "_service_availability_notes": {
+    "bedrock": "Available as of November 2024 in us-gov-west-1 and us-gov-east-1. FedRAMP High and DoD IL-4/5 authorized. Includes Claude 3.5 Sonnet, Claude 3 models, Llama 3/3.1/3.2 models, Amazon Titan models.",
+    "sagemaker": "Fully available including SageMaker JumpStart with approved foundation models",
+    "comprehend": "Fully available including Comprehend Medical",
+    "rekognition": "Fully available with FIPS endpoints",
+    "mobiletargeting": "Available (Amazon Pinpoint)",
+    "aws-marketplace": "Available with limitations - full catalog not available, container products and ML products not supported, cannot launch from AWS Marketplace website with GovCloud account"
+  },
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "StratusScanOptionalMLAIPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "sagemaker:Describe*",
+        "sagemaker:List*",
+        "sagemaker:Get*",
+        "bedrock:Get*",
+        "bedrock:List*",
+        "bedrock:GetAgent",
+        "bedrock:GetAgentAlias",
+        "bedrock:GetAgentKnowledgeBase",
+        "bedrock:GetAgentVersion",
+        "bedrock:GetDataSource",
+        "bedrock:GetKnowledgeBase",
+        "bedrock:ListAgentActionGroups",
+        "bedrock:ListAgentAliases",
+        "bedrock:ListAgentKnowledgeBases",
+        "bedrock:ListAgents",
+        "bedrock:ListAgentVersions",
+        "bedrock:ListDataSources",
+        "bedrock:ListKnowledgeBases",
+        "bedrock:ListTagsForResource",
+        "comprehend:Describe*",
+        "comprehend:List*",
+        "rekognition:Describe*",
+        "rekognition:List*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StratusScanOptionalMobileMarketingPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "mobiletargeting:GetApp",
+        "mobiletargeting:GetApplicationSettings",
+        "mobiletargeting:GetCampaign",
+        "mobiletargeting:GetEmailChannel",
+        "mobiletargeting:GetSegment",
+        "mobiletargeting:GetSmsChannel",
+        "mobiletargeting:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StratusScanOptionalMarketplacePermissions",
+      "Effect": "Allow",
+      "Action": [
+        "aws-marketplace:DescribeEntity",
+        "aws-marketplace:ListEntities",
+        "aws-marketplace:ListChangeSets",
+        "aws-marketplace:ViewSubscriptions"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
