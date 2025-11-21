@@ -75,7 +75,7 @@ def print_title():
         print(f"Account ID: {account_id}")
         print(f"Account Name: {account_name}")
     except Exception as e:
-        print("Environment: AWS Commercial")
+        print("Environment: Unknown (detection failed)")
         print("====================================================================")
         print("Could not determine account information.")
         account_id = "unknown"
