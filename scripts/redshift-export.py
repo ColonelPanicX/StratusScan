@@ -38,13 +38,19 @@ except ImportError:
     sys.exit(1)
 
 
-@utils.aws_error_handler("Collecting Redshift clusters", default_return=[])
-def collect_redshift_clusters(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect Redshift cluster information from AWS regions."""
-    all_clusters = []
+def scan_redshift_clusters_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan Redshift clusters in a single AWS region.
 
-    for region in regions:
-        utils.log_info(f"Scanning Redshift clusters in {region}...")
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of Redshift cluster dictionaries for this region
+    """
+    region_clusters = []
+
+    try:
         redshift_client = utils.get_boto3_client('redshift', region_name=region)
 
         paginator = redshift_client.get_paginator('describe_clusters')
@@ -144,7 +150,7 @@ def collect_redshift_clusters(regions: List[str]) -> List[Dict[str, Any]]:
                 logging_enabled = logging_status.get('LoggingEnabled', False) if logging_status else False
                 s3_bucket_name = logging_status.get('BucketName', 'N/A') if logging_enabled else 'N/A'
 
-                all_clusters.append({
+                region_clusters.append({
                     'Region': region,
                     'Cluster ID': cluster_id,
                     'Status': cluster_status,
@@ -180,18 +186,32 @@ def collect_redshift_clusters(regions: List[str]) -> List[Dict[str, Any]]:
                     'Cluster Revision': cluster_revision_number,
                 })
 
-        utils.log_success(f"Collected {len([c for c in all_clusters if c['Region'] == region])} Redshift clusters from {region}")
+    except Exception as e:
+        utils.log_error(f"Error scanning Redshift clusters in {region}", e)
+
+    utils.log_info(f"Found {len(region_clusters)} Redshift clusters in {region}")
+    return region_clusters
+
+
+@utils.aws_error_handler("Collecting Redshift clusters", default_return=[])
+def collect_redshift_clusters(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect Redshift cluster information from AWS regions."""
+    utils.log_info("Using concurrent region scanning for improved performance")
+
+    all_clusters = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_redshift_clusters_in_region,
+        resource_type="Redshift clusters"
+    )
 
     return all_clusters
 
 
-@utils.aws_error_handler("Collecting Redshift snapshots", default_return=[])
-def collect_redshift_snapshots(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect Redshift snapshot information from AWS regions."""
-    all_snapshots = []
+def scan_redshift_snapshots_in_region(region: str) -> List[Dict[str, Any]]:
+    """Scan Redshift snapshots in a single AWS region."""
+    region_snapshots = []
 
-    for region in regions:
-        utils.log_info(f"Scanning Redshift snapshots in {region}...")
+    try:
         redshift_client = utils.get_boto3_client('redshift', region_name=region)
 
         paginator = redshift_client.get_paginator('describe_cluster_snapshots')
@@ -246,7 +266,7 @@ def collect_redshift_snapshots(regions: List[str]) -> List[Dict[str, Any]]:
                 # Estimated seconds to completion (for in-progress snapshots)
                 estimated_seconds_to_completion = snapshot.get('EstimatedSecondsToCompletion', 0)
 
-                all_snapshots.append({
+                region_snapshots.append({
                     'Region': region,
                     'Snapshot ID': snapshot_id,
                     'Cluster ID': cluster_id,
@@ -267,18 +287,32 @@ def collect_redshift_snapshots(regions: List[str]) -> List[Dict[str, Any]]:
                     'Est. Seconds to Complete': estimated_seconds_to_completion if estimated_seconds_to_completion > 0 else 'N/A',
                 })
 
-        utils.log_success(f"Collected {len([s for s in all_snapshots if s['Region'] == region])} Redshift snapshots from {region}")
+    except Exception as e:
+        utils.log_error(f"Error scanning Redshift snapshots in {region}", e)
+
+    utils.log_info(f"Found {len(region_snapshots)} Redshift snapshots in {region}")
+    return region_snapshots
+
+
+@utils.aws_error_handler("Collecting Redshift snapshots", default_return=[])
+def collect_redshift_snapshots(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect Redshift snapshot information from AWS regions."""
+    utils.log_info("Using concurrent region scanning for improved performance")
+
+    all_snapshots = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_redshift_snapshots_in_region,
+        resource_type="Redshift snapshots"
+    )
 
     return all_snapshots
 
 
-@utils.aws_error_handler("Collecting Redshift parameter groups", default_return=[])
-def collect_redshift_parameter_groups(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect Redshift parameter group information from AWS regions."""
-    all_parameter_groups = []
+def scan_redshift_parameter_groups_in_region(region: str) -> List[Dict[str, Any]]:
+    """Scan Redshift parameter groups in a single AWS region."""
+    region_parameter_groups = []
 
-    for region in regions:
-        utils.log_info(f"Scanning Redshift parameter groups in {region}...")
+    try:
         redshift_client = utils.get_boto3_client('redshift', region_name=region)
 
         paginator = redshift_client.get_paginator('describe_cluster_parameter_groups')
@@ -294,7 +328,7 @@ def collect_redshift_parameter_groups(regions: List[str]) -> List[Dict[str, Any]
                 tags = pg.get('Tags', [])
                 tags_str = ', '.join([f"{tag.get('Key', '')}={tag.get('Value', '')}" for tag in tags]) if tags else 'None'
 
-                all_parameter_groups.append({
+                region_parameter_groups.append({
                     'Region': region,
                     'Parameter Group Name': parameter_group_name,
                     'Family': parameter_group_family,
@@ -302,18 +336,32 @@ def collect_redshift_parameter_groups(regions: List[str]) -> List[Dict[str, Any]
                     'Tags': tags_str,
                 })
 
-        utils.log_success(f"Collected {len([pg for pg in all_parameter_groups if pg['Region'] == region])} Redshift parameter groups from {region}")
+    except Exception as e:
+        utils.log_error(f"Error scanning Redshift parameter groups in {region}", e)
+
+    utils.log_info(f"Found {len(region_parameter_groups)} Redshift parameter groups in {region}")
+    return region_parameter_groups
+
+
+@utils.aws_error_handler("Collecting Redshift parameter groups", default_return=[])
+def collect_redshift_parameter_groups(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect Redshift parameter group information from AWS regions."""
+    utils.log_info("Using concurrent region scanning for improved performance")
+
+    all_parameter_groups = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_redshift_parameter_groups_in_region,
+        resource_type="Redshift parameter groups"
+    )
 
     return all_parameter_groups
 
 
-@utils.aws_error_handler("Collecting Redshift subnet groups", default_return=[])
-def collect_redshift_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect Redshift subnet group information from AWS regions."""
-    all_subnet_groups = []
+def scan_redshift_subnet_groups_in_region(region: str) -> List[Dict[str, Any]]:
+    """Scan Redshift subnet groups in a single AWS region."""
+    region_subnet_groups = []
 
-    for region in regions:
-        utils.log_info(f"Scanning Redshift subnet groups in {region}...")
+    try:
         redshift_client = utils.get_boto3_client('redshift', region_name=region)
 
         paginator = redshift_client.get_paginator('describe_cluster_subnet_groups')
@@ -344,7 +392,7 @@ def collect_redshift_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]:
                 tags = sg.get('Tags', [])
                 tags_str = ', '.join([f"{tag.get('Key', '')}={tag.get('Value', '')}" for tag in tags]) if tags else 'None'
 
-                all_subnet_groups.append({
+                region_subnet_groups.append({
                     'Region': region,
                     'Subnet Group Name': subnet_group_name,
                     'Description': description,
@@ -356,7 +404,23 @@ def collect_redshift_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]:
                     'Tags': tags_str,
                 })
 
-        utils.log_success(f"Collected {len([sg for sg in all_subnet_groups if sg['Region'] == region])} Redshift subnet groups from {region}")
+    except Exception as e:
+        utils.log_error(f"Error scanning Redshift subnet groups in {region}", e)
+
+    utils.log_info(f"Found {len(region_subnet_groups)} Redshift subnet groups in {region}")
+    return region_subnet_groups
+
+
+@utils.aws_error_handler("Collecting Redshift subnet groups", default_return=[])
+def collect_redshift_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect Redshift subnet group information from AWS regions."""
+    utils.log_info("Using concurrent region scanning for improved performance")
+
+    all_subnet_groups = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_redshift_subnet_groups_in_region,
+        resource_type="Redshift subnet groups"
+    )
 
     return all_subnet_groups
 

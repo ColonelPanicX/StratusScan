@@ -92,6 +92,73 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def scan_rest_apis_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan REST APIs in a single AWS region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of REST API dictionaries for this region
+    """
+    region_apis = []
+
+    try:
+        apigw_client = utils.get_boto3_client('apigateway', region_name=region)
+
+        paginator = apigw_client.get_paginator('get_rest_apis')
+        for page in paginator.paginate():
+            apis = page.get('items', [])
+
+            for api in apis:
+                api_id = api.get('id', 'N/A')
+                api_name = api.get('name', 'N/A')
+
+                print(f"  Processing REST API: {api_name}")
+
+                # API details
+                api_type = 'REST'
+                description = api.get('description', 'N/A')
+                created_date = api.get('createdDate', '')
+                if created_date:
+                    created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
+
+                # Endpoint configuration
+                endpoint_config = api.get('endpointConfiguration', {})
+                endpoint_types = endpoint_config.get('types', [])
+                endpoint_types_str = ', '.join(endpoint_types) if endpoint_types else 'EDGE'
+
+                # Policy
+                policy = api.get('policy', 'None')
+
+                # Version
+                version = api.get('version', 'N/A')
+
+                # Tags
+                tags = api.get('tags', {})
+                tags_str = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'None'
+
+                region_apis.append({
+                    'Region': region,
+                    'API ID': api_id,
+                    'API Name': api_name,
+                    'API Type': api_type,
+                    'Description': description,
+                    'Endpoint Type': endpoint_types_str,
+                    'Created Date': created_date if created_date else 'N/A',
+                    'Version': version,
+                    'Has Policy': 'Yes' if policy != 'None' else 'No',
+                    'Tags': tags_str
+                })
+
+    except Exception as e:
+        utils.log_error(f"Error collecting REST APIs in region {region}", e)
+
+    utils.log_info(f"Found {len(region_apis)} REST APIs in {region}")
+    return region_apis
+
+
 @utils.aws_error_handler("Collecting REST APIs", default_return=[])
 def collect_rest_apis(regions: List[str]) -> List[Dict[str, Any]]:
     """
@@ -104,67 +171,86 @@ def collect_rest_apis(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with REST API information
     """
     print("\n=== COLLECTING REST APIs (v1) ===")
-    all_apis = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            apigw_client = utils.get_boto3_client('apigateway', region_name=region)
-
-            paginator = apigw_client.get_paginator('get_rest_apis')
-            for page in paginator.paginate():
-                apis = page.get('items', [])
-
-                for api in apis:
-                    api_id = api.get('id', 'N/A')
-                    api_name = api.get('name', 'N/A')
-
-                    print(f"  Processing REST API: {api_name}")
-
-                    # API details
-                    api_type = 'REST'
-                    description = api.get('description', 'N/A')
-                    created_date = api.get('createdDate', '')
-                    if created_date:
-                        created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
-
-                    # Endpoint configuration
-                    endpoint_config = api.get('endpointConfiguration', {})
-                    endpoint_types = endpoint_config.get('types', [])
-                    endpoint_types_str = ', '.join(endpoint_types) if endpoint_types else 'EDGE'
-
-                    # Policy
-                    policy = api.get('policy', 'None')
-
-                    # Version
-                    version = api.get('version', 'N/A')
-
-                    # Tags
-                    tags = api.get('tags', {})
-                    tags_str = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'None'
-
-                    all_apis.append({
-                        'Region': region,
-                        'API ID': api_id,
-                        'API Name': api_name,
-                        'API Type': api_type,
-                        'Description': description,
-                        'Endpoint Type': endpoint_types_str,
-                        'Created Date': created_date if created_date else 'N/A',
-                        'Version': version,
-                        'Has Policy': 'Yes' if policy != 'None' else 'No',
-                        'Tags': tags_str
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting REST APIs in region {region}", e)
+    all_apis = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_rest_apis_in_region,
+        resource_type="REST APIs"
+    )
 
     utils.log_success(f"Total REST APIs collected: {len(all_apis)}")
     return all_apis
+
+
+def scan_http_apis_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan HTTP APIs in a single AWS region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of HTTP API dictionaries for this region
+    """
+    region_apis = []
+
+    try:
+        apigw2_client = utils.get_boto3_client('apigatewayv2', region_name=region)
+
+        paginator = apigw2_client.get_paginator('get_apis')
+        for page in paginator.paginate():
+            apis = page.get('Items', [])
+
+            for api in apis:
+                api_id = api.get('ApiId', 'N/A')
+                api_name = api.get('Name', 'N/A')
+
+                print(f"  Processing HTTP API: {api_name}")
+
+                # API details
+                protocol_type = api.get('ProtocolType', 'HTTP')
+                description = api.get('Description', 'N/A')
+                created_date = api.get('CreatedDate', '')
+                if created_date:
+                    created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
+
+                # Endpoint
+                api_endpoint = api.get('ApiEndpoint', 'N/A')
+
+                # CORS configuration
+                cors_config = api.get('CorsConfiguration', {})
+                cors_enabled = 'Yes' if cors_config else 'No'
+
+                # Version
+                version = api.get('Version', 'N/A')
+
+                # Route selection expression
+                route_selection = api.get('RouteSelectionExpression', 'N/A')
+
+                # Tags
+                tags = api.get('Tags', {})
+                tags_str = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'None'
+
+                region_apis.append({
+                    'Region': region,
+                    'API ID': api_id,
+                    'API Name': api_name,
+                    'API Type': protocol_type,
+                    'Description': description,
+                    'API Endpoint': api_endpoint,
+                    'Created Date': created_date if created_date else 'N/A',
+                    'CORS Enabled': cors_enabled,
+                    'Version': version,
+                    'Route Selection': route_selection,
+                    'Tags': tags_str
+                })
+
+    except Exception as e:
+        utils.log_error(f"Error collecting HTTP APIs in region {region}", e)
+
+    utils.log_info(f"Found {len(region_apis)} HTTP APIs in {region}")
+    return region_apis
 
 
 @utils.aws_error_handler("Collecting HTTP APIs", default_return=[])
@@ -179,70 +265,112 @@ def collect_http_apis(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with HTTP API information
     """
     print("\n=== COLLECTING HTTP APIs (v2) ===")
-    all_apis = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            apigw2_client = utils.get_boto3_client('apigatewayv2', region_name=region)
-
-            paginator = apigw2_client.get_paginator('get_apis')
-            for page in paginator.paginate():
-                apis = page.get('Items', [])
-
-                for api in apis:
-                    api_id = api.get('ApiId', 'N/A')
-                    api_name = api.get('Name', 'N/A')
-
-                    print(f"  Processing HTTP API: {api_name}")
-
-                    # API details
-                    protocol_type = api.get('ProtocolType', 'HTTP')
-                    description = api.get('Description', 'N/A')
-                    created_date = api.get('CreatedDate', '')
-                    if created_date:
-                        created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
-
-                    # Endpoint
-                    api_endpoint = api.get('ApiEndpoint', 'N/A')
-
-                    # CORS configuration
-                    cors_config = api.get('CorsConfiguration', {})
-                    cors_enabled = 'Yes' if cors_config else 'No'
-
-                    # Version
-                    version = api.get('Version', 'N/A')
-
-                    # Route selection expression
-                    route_selection = api.get('RouteSelectionExpression', 'N/A')
-
-                    # Tags
-                    tags = api.get('Tags', {})
-                    tags_str = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'None'
-
-                    all_apis.append({
-                        'Region': region,
-                        'API ID': api_id,
-                        'API Name': api_name,
-                        'API Type': protocol_type,
-                        'Description': description,
-                        'API Endpoint': api_endpoint,
-                        'Created Date': created_date if created_date else 'N/A',
-                        'CORS Enabled': cors_enabled,
-                        'Version': version,
-                        'Route Selection': route_selection,
-                        'Tags': tags_str
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting HTTP APIs in region {region}", e)
+    all_apis = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_http_apis_in_region,
+        resource_type="HTTP APIs"
+    )
 
     utils.log_success(f"Total HTTP APIs collected: {len(all_apis)}")
     return all_apis
+
+
+def scan_api_stages_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan API Gateway stages in a single AWS region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of API stage dictionaries for this region
+    """
+    region_stages = []
+
+    try:
+        apigw_client = utils.get_boto3_client('apigateway', region_name=region)
+
+        # Get REST APIs first
+        apis_response = apigw_client.get_rest_apis()
+        apis = apis_response.get('items', [])
+
+        for api in apis:
+            api_id = api.get('id', '')
+            api_name = api.get('name', 'N/A')
+
+            try:
+                # Get stages for this API
+                stages_response = apigw_client.get_stages(restApiId=api_id)
+                stages = stages_response.get('item', [])
+
+                for stage in stages:
+                    stage_name = stage.get('stageName', 'N/A')
+
+                    print(f"  Processing stage: {api_name}/{stage_name}")
+
+                    # Stage details
+                    deployment_id = stage.get('deploymentId', 'N/A')
+                    description = stage.get('description', 'N/A')
+                    created_date = stage.get('createdDate', '')
+                    if created_date:
+                        created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
+
+                    last_updated = stage.get('lastUpdatedDate', '')
+                    if last_updated:
+                        last_updated = last_updated.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_updated, datetime.datetime) else str(last_updated)
+
+                    # Caching
+                    cache_enabled = stage.get('cacheClusterEnabled', False)
+                    cache_size = stage.get('cacheClusterSize', 'N/A')
+
+                    # Logging
+                    method_settings = stage.get('methodSettings', {})
+                    logging_level = 'OFF'
+                    if method_settings:
+                        for key, value in method_settings.items():
+                            if 'loggingLevel' in value:
+                                logging_level = value.get('loggingLevel', 'OFF')
+                                break
+
+                    # Tracing
+                    tracing_enabled = stage.get('tracingEnabled', False)
+
+                    # Throttling
+                    throttle_burst = method_settings.get('*/*', {}).get('throttlingBurstLimit', 'N/A') if method_settings else 'N/A'
+                    throttle_rate = method_settings.get('*/*', {}).get('throttlingRateLimit', 'N/A') if method_settings else 'N/A'
+
+                    # Tags
+                    tags = stage.get('tags', {})
+                    tags_str = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'None'
+
+                    region_stages.append({
+                        'Region': region,
+                        'API ID': api_id,
+                        'API Name': api_name,
+                        'Stage Name': stage_name,
+                        'Deployment ID': deployment_id,
+                        'Description': description,
+                        'Cache Enabled': cache_enabled,
+                        'Cache Size': cache_size if cache_enabled else 'N/A',
+                        'Logging Level': logging_level,
+                        'X-Ray Tracing': tracing_enabled,
+                        'Throttle Burst Limit': throttle_burst,
+                        'Throttle Rate Limit': throttle_rate,
+                        'Created Date': created_date if created_date else 'N/A',
+                        'Last Updated': last_updated if last_updated else 'N/A',
+                        'Tags': tags_str
+                    })
+
+            except Exception as e:
+                utils.log_warning(f"Could not get stages for API {api_name}: {e}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting API stages in region {region}", e)
+
+    utils.log_info(f"Found {len(region_stages)} API stages in {region}")
+    return region_stages
 
 
 @utils.aws_error_handler("Collecting API stages", default_return=[])
@@ -257,93 +385,13 @@ def collect_api_stages(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with stage information
     """
     print("\n=== COLLECTING API STAGES ===")
-    all_stages = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            apigw_client = utils.get_boto3_client('apigateway', region_name=region)
-
-            # Get REST APIs first
-            apis_response = apigw_client.get_rest_apis()
-            apis = apis_response.get('items', [])
-
-            for api in apis:
-                api_id = api.get('id', '')
-                api_name = api.get('name', 'N/A')
-
-                try:
-                    # Get stages for this API
-                    stages_response = apigw_client.get_stages(restApiId=api_id)
-                    stages = stages_response.get('item', [])
-
-                    for stage in stages:
-                        stage_name = stage.get('stageName', 'N/A')
-
-                        print(f"  Processing stage: {api_name}/{stage_name}")
-
-                        # Stage details
-                        deployment_id = stage.get('deploymentId', 'N/A')
-                        description = stage.get('description', 'N/A')
-                        created_date = stage.get('createdDate', '')
-                        if created_date:
-                            created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
-
-                        last_updated = stage.get('lastUpdatedDate', '')
-                        if last_updated:
-                            last_updated = last_updated.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_updated, datetime.datetime) else str(last_updated)
-
-                        # Caching
-                        cache_enabled = stage.get('cacheClusterEnabled', False)
-                        cache_size = stage.get('cacheClusterSize', 'N/A')
-
-                        # Logging
-                        method_settings = stage.get('methodSettings', {})
-                        logging_level = 'OFF'
-                        if method_settings:
-                            for key, value in method_settings.items():
-                                if 'loggingLevel' in value:
-                                    logging_level = value.get('loggingLevel', 'OFF')
-                                    break
-
-                        # Tracing
-                        tracing_enabled = stage.get('tracingEnabled', False)
-
-                        # Throttling
-                        throttle_burst = method_settings.get('*/*', {}).get('throttlingBurstLimit', 'N/A') if method_settings else 'N/A'
-                        throttle_rate = method_settings.get('*/*', {}).get('throttlingRateLimit', 'N/A') if method_settings else 'N/A'
-
-                        # Tags
-                        tags = stage.get('tags', {})
-                        tags_str = ', '.join([f"{k}={v}" for k, v in tags.items()]) if tags else 'None'
-
-                        all_stages.append({
-                            'Region': region,
-                            'API ID': api_id,
-                            'API Name': api_name,
-                            'Stage Name': stage_name,
-                            'Deployment ID': deployment_id,
-                            'Description': description,
-                            'Cache Enabled': cache_enabled,
-                            'Cache Size': cache_size if cache_enabled else 'N/A',
-                            'Logging Level': logging_level,
-                            'X-Ray Tracing': tracing_enabled,
-                            'Throttle Burst Limit': throttle_burst,
-                            'Throttle Rate Limit': throttle_rate,
-                            'Created Date': created_date if created_date else 'N/A',
-                            'Last Updated': last_updated if last_updated else 'N/A',
-                            'Tags': tags_str
-                        })
-
-                except Exception as e:
-                    utils.log_warning(f"Could not get stages for API {api_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting API stages in region {region}", e)
+    all_stages = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_api_stages_in_region,
+        resource_type="API stages"
+    )
 
     utils.log_success(f"Total API stages collected: {len(all_stages)}")
     return all_stages

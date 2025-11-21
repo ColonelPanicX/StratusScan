@@ -93,10 +93,105 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def scan_efs_file_systems_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan EFS file systems in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with file system information from this region
+    """
+    regional_file_systems = []
+
+    try:
+        efs_client = utils.get_boto3_client('efs', region_name=region)
+
+        # Get file systems
+        paginator = efs_client.get_paginator('describe_file_systems')
+        fs_count = 0
+
+        for page in paginator.paginate():
+            file_systems = page.get('FileSystems', [])
+            fs_count += len(file_systems)
+
+            for fs in file_systems:
+                file_system_id = fs.get('FileSystemId', '')
+                print(f"  Processing file system: {file_system_id}")
+
+                # Basic information
+                name = fs.get('Name', 'N/A')
+                creation_token = fs.get('CreationToken', '')
+                creation_time = fs.get('CreationTime', '')
+                if creation_time:
+                    creation_time = creation_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_time, datetime.datetime) else str(creation_time)
+
+                life_cycle_state = fs.get('LifeCycleState', '')
+                number_of_mount_targets = fs.get('NumberOfMountTargets', 0)
+
+                # Size
+                size_in_bytes = fs.get('SizeInBytes', {})
+                value_bytes = size_in_bytes.get('Value', 0)
+                value_gb = round(value_bytes / (1024**3), 2) if value_bytes else 0
+                value_in_ia = size_in_bytes.get('ValueInIA', 0)
+                value_in_standard = size_in_bytes.get('ValueInStandard', 0)
+
+                # Performance mode
+                performance_mode = fs.get('PerformanceMode', 'N/A')
+
+                # Encrypted
+                encrypted = fs.get('Encrypted', False)
+                kms_key_id = fs.get('KmsKeyId', 'N/A')
+
+                # Throughput mode
+                throughput_mode = fs.get('ThroughputMode', 'N/A')
+                provisioned_throughput = fs.get('ProvisionedThroughputInMibps', 'N/A')
+
+                # Availability zone (for One Zone storage)
+                availability_zone_name = fs.get('AvailabilityZoneName', 'Regional')
+
+                # File system ARN
+                file_system_arn = fs.get('FileSystemArn', '')
+
+                # Tags
+                tags = fs.get('Tags', [])
+                tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
+                tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
+
+                regional_file_systems.append({
+                    'Region': region,
+                    'File System ID': file_system_id,
+                    'Name': name,
+                    'Life Cycle State': life_cycle_state,
+                    'Size (GB)': value_gb,
+                    'Size in IA (bytes)': value_in_ia,
+                    'Size in Standard (bytes)': value_in_standard,
+                    'Performance Mode': performance_mode,
+                    'Throughput Mode': throughput_mode,
+                    'Provisioned Throughput (MiB/s)': provisioned_throughput,
+                    'Encrypted': encrypted,
+                    'KMS Key ID': kms_key_id,
+                    'Availability Zone': availability_zone_name,
+                    'Mount Target Count': number_of_mount_targets,
+                    'Creation Time': creation_time,
+                    'Creation Token': creation_token,
+                    'Tags': tags_str,
+                    'File System ARN': file_system_arn
+                })
+
+        utils.log_info(f"Found {fs_count} EFS file systems in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error processing region {region} for EFS file systems", e)
+
+    return regional_file_systems
+
+
 @utils.aws_error_handler("Collecting EFS file systems", default_return=[])
 def collect_efs_file_systems(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect EFS file system information from AWS regions.
+    Collect EFS file system information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -105,103 +200,84 @@ def collect_efs_file_systems(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with file system information
     """
     print("\n=== COLLECTING EFS FILE SYSTEMS ===")
-    all_file_systems = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            efs_client = utils.get_boto3_client('efs', region_name=region)
-
-            # Get file systems
-            paginator = efs_client.get_paginator('describe_file_systems')
-            fs_count = 0
-
-            for page in paginator.paginate():
-                file_systems = page.get('FileSystems', [])
-                fs_count += len(file_systems)
-
-                for fs in file_systems:
-                    file_system_id = fs.get('FileSystemId', '')
-                    print(f"  Processing file system: {file_system_id}")
-
-                    # Basic information
-                    name = fs.get('Name', 'N/A')
-                    creation_token = fs.get('CreationToken', '')
-                    creation_time = fs.get('CreationTime', '')
-                    if creation_time:
-                        creation_time = creation_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_time, datetime.datetime) else str(creation_time)
-
-                    life_cycle_state = fs.get('LifeCycleState', '')
-                    number_of_mount_targets = fs.get('NumberOfMountTargets', 0)
-
-                    # Size
-                    size_in_bytes = fs.get('SizeInBytes', {})
-                    value_bytes = size_in_bytes.get('Value', 0)
-                    value_gb = round(value_bytes / (1024**3), 2) if value_bytes else 0
-                    value_in_ia = size_in_bytes.get('ValueInIA', 0)
-                    value_in_standard = size_in_bytes.get('ValueInStandard', 0)
-
-                    # Performance mode
-                    performance_mode = fs.get('PerformanceMode', 'N/A')
-
-                    # Encrypted
-                    encrypted = fs.get('Encrypted', False)
-                    kms_key_id = fs.get('KmsKeyId', 'N/A')
-
-                    # Throughput mode
-                    throughput_mode = fs.get('ThroughputMode', 'N/A')
-                    provisioned_throughput = fs.get('ProvisionedThroughputInMibps', 'N/A')
-
-                    # Availability zone (for One Zone storage)
-                    availability_zone_name = fs.get('AvailabilityZoneName', 'Regional')
-
-                    # File system ARN
-                    file_system_arn = fs.get('FileSystemArn', '')
-
-                    # Tags
-                    tags = fs.get('Tags', [])
-                    tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
-                    tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
-
-                    all_file_systems.append({
-                        'Region': region,
-                        'File System ID': file_system_id,
-                        'Name': name,
-                        'Life Cycle State': life_cycle_state,
-                        'Size (GB)': value_gb,
-                        'Size in IA (bytes)': value_in_ia,
-                        'Size in Standard (bytes)': value_in_standard,
-                        'Performance Mode': performance_mode,
-                        'Throughput Mode': throughput_mode,
-                        'Provisioned Throughput (MiB/s)': provisioned_throughput,
-                        'Encrypted': encrypted,
-                        'KMS Key ID': kms_key_id,
-                        'Availability Zone': availability_zone_name,
-                        'Mount Target Count': number_of_mount_targets,
-                        'Creation Time': creation_time,
-                        'Creation Token': creation_token,
-                        'Tags': tags_str,
-                        'File System ARN': file_system_arn
-                    })
-
-            print(f"  Found {fs_count} EFS file systems")
-
-        except Exception as e:
-            utils.log_error(f"Error processing region {region} for EFS file systems", e)
+    # Use concurrent scanning
+    all_file_systems = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_efs_file_systems_in_region,
+        resource_type="EFS file systems"
+    )
 
     utils.log_success(f"Total EFS file systems collected: {len(all_file_systems)}")
     return all_file_systems
 
 
+def scan_mount_targets_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan EFS mount targets in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with mount target information from this region
+    """
+    regional_mount_targets = []
+
+    try:
+        efs_client = utils.get_boto3_client('efs', region_name=region)
+
+        # Get all file systems first
+        fs_paginator = efs_client.get_paginator('describe_file_systems')
+
+        for fs_page in fs_paginator.paginate():
+            file_systems = fs_page.get('FileSystems', [])
+
+            for fs in file_systems:
+                file_system_id = fs.get('FileSystemId', '')
+
+                try:
+                    # Get mount targets for this file system
+                    mt_response = efs_client.describe_mount_targets(FileSystemId=file_system_id)
+                    mount_targets = mt_response.get('MountTargets', [])
+
+                    for mt in mount_targets:
+                        mount_target_id = mt.get('MountTargetId', '')
+                        subnet_id = mt.get('SubnetId', '')
+                        availability_zone_name = mt.get('AvailabilityZoneName', '')
+                        ip_address = mt.get('IpAddress', 'N/A')
+                        network_interface_id = mt.get('NetworkInterfaceId', 'N/A')
+                        life_cycle_state = mt.get('LifeCycleState', '')
+                        vpc_id = mt.get('VpcId', 'N/A')
+
+                        regional_mount_targets.append({
+                            'Region': region,
+                            'File System ID': file_system_id,
+                            'Mount Target ID': mount_target_id,
+                            'Availability Zone': availability_zone_name,
+                            'Subnet ID': subnet_id,
+                            'VPC ID': vpc_id,
+                            'IP Address': ip_address,
+                            'Network Interface ID': network_interface_id,
+                            'Life Cycle State': life_cycle_state
+                        })
+
+                except Exception as e:
+                    utils.log_warning(f"Could not get mount targets for {file_system_id}: {e}")
+
+        utils.log_info(f"Found {len(regional_mount_targets)} mount targets in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting mount targets in region {region}", e)
+
+    return regional_mount_targets
+
+
 @utils.aws_error_handler("Collecting mount targets", default_return=[])
 def collect_mount_targets(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect EFS mount target information from AWS regions.
+    Collect EFS mount target information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -210,66 +286,86 @@ def collect_mount_targets(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with mount target information
     """
     print("\n=== COLLECTING EFS MOUNT TARGETS ===")
-    all_mount_targets = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            efs_client = utils.get_boto3_client('efs', region_name=region)
-
-            # Get all file systems first
-            fs_paginator = efs_client.get_paginator('describe_file_systems')
-
-            for fs_page in fs_paginator.paginate():
-                file_systems = fs_page.get('FileSystems', [])
-
-                for fs in file_systems:
-                    file_system_id = fs.get('FileSystemId', '')
-
-                    try:
-                        # Get mount targets for this file system
-                        mt_response = efs_client.describe_mount_targets(FileSystemId=file_system_id)
-                        mount_targets = mt_response.get('MountTargets', [])
-
-                        for mt in mount_targets:
-                            mount_target_id = mt.get('MountTargetId', '')
-                            subnet_id = mt.get('SubnetId', '')
-                            availability_zone_name = mt.get('AvailabilityZoneName', '')
-                            ip_address = mt.get('IpAddress', 'N/A')
-                            network_interface_id = mt.get('NetworkInterfaceId', 'N/A')
-                            life_cycle_state = mt.get('LifeCycleState', '')
-                            vpc_id = mt.get('VpcId', 'N/A')
-
-                            all_mount_targets.append({
-                                'Region': region,
-                                'File System ID': file_system_id,
-                                'Mount Target ID': mount_target_id,
-                                'Availability Zone': availability_zone_name,
-                                'Subnet ID': subnet_id,
-                                'VPC ID': vpc_id,
-                                'IP Address': ip_address,
-                                'Network Interface ID': network_interface_id,
-                                'Life Cycle State': life_cycle_state
-                            })
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get mount targets for {file_system_id}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting mount targets in region {region}", e)
+    # Use concurrent scanning
+    all_mount_targets = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_mount_targets_in_region,
+        resource_type="EFS mount targets"
+    )
 
     utils.log_success(f"Total mount targets collected: {len(all_mount_targets)}")
     return all_mount_targets
 
 
+def scan_access_points_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan EFS access points in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with access point information from this region
+    """
+    regional_access_points = []
+
+    try:
+        efs_client = utils.get_boto3_client('efs', region_name=region)
+
+        # Get access points
+        response = efs_client.describe_access_points()
+        access_points = response.get('AccessPoints', [])
+
+        for ap in access_points:
+            access_point_id = ap.get('AccessPointId', '')
+            file_system_id = ap.get('FileSystemId', '')
+            name = ap.get('Name', 'N/A')
+            life_cycle_state = ap.get('LifeCycleState', '')
+
+            # POSIX user
+            posix_user = ap.get('PosixUser', {})
+            uid = posix_user.get('Uid', 'N/A')
+            gid = posix_user.get('Gid', 'N/A')
+
+            # Root directory
+            root_directory = ap.get('RootDirectory', {})
+            path = root_directory.get('Path', '/')
+
+            # ARN
+            access_point_arn = ap.get('AccessPointArn', '')
+
+            # Tags
+            tags = ap.get('Tags', [])
+            tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
+            tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
+
+            regional_access_points.append({
+                'Region': region,
+                'File System ID': file_system_id,
+                'Access Point ID': access_point_id,
+                'Name': name,
+                'Life Cycle State': life_cycle_state,
+                'Root Path': path,
+                'POSIX User UID': uid,
+                'POSIX Group GID': gid,
+                'Tags': tags_str,
+                'Access Point ARN': access_point_arn
+            })
+
+        utils.log_info(f"Found {len(regional_access_points)} access points in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting access points in region {region}", e)
+
+    return regional_access_points
+
+
 @utils.aws_error_handler("Collecting access points", default_return=[])
 def collect_access_points(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect EFS access point information from AWS regions.
+    Collect EFS access point information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -278,59 +374,14 @@ def collect_access_points(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with access point information
     """
     print("\n=== COLLECTING EFS ACCESS POINTS ===")
-    all_access_points = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            efs_client = utils.get_boto3_client('efs', region_name=region)
-
-            # Get access points
-            response = efs_client.describe_access_points()
-            access_points = response.get('AccessPoints', [])
-
-            for ap in access_points:
-                access_point_id = ap.get('AccessPointId', '')
-                file_system_id = ap.get('FileSystemId', '')
-                name = ap.get('Name', 'N/A')
-                life_cycle_state = ap.get('LifeCycleState', '')
-
-                # POSIX user
-                posix_user = ap.get('PosixUser', {})
-                uid = posix_user.get('Uid', 'N/A')
-                gid = posix_user.get('Gid', 'N/A')
-
-                # Root directory
-                root_directory = ap.get('RootDirectory', {})
-                path = root_directory.get('Path', '/')
-
-                # ARN
-                access_point_arn = ap.get('AccessPointArn', '')
-
-                # Tags
-                tags = ap.get('Tags', [])
-                tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
-                tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
-
-                all_access_points.append({
-                    'Region': region,
-                    'File System ID': file_system_id,
-                    'Access Point ID': access_point_id,
-                    'Name': name,
-                    'Life Cycle State': life_cycle_state,
-                    'Root Path': path,
-                    'POSIX User UID': uid,
-                    'POSIX Group GID': gid,
-                    'Tags': tags_str,
-                    'Access Point ARN': access_point_arn
-                })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting access points in region {region}", e)
+    # Use concurrent scanning
+    all_access_points = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_access_points_in_region,
+        resource_type="EFS access points"
+    )
 
     utils.log_success(f"Total access points collected: {len(all_access_points)}")
     return all_access_points

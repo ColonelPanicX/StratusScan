@@ -99,10 +99,122 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def scan_secrets_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan Secrets Manager secrets in a single region.
+
+    SECURITY: This function does NOT retrieve secret values, only metadata.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with secret metadata from this region
+    """
+    regional_secrets = []
+
+    try:
+        secrets_client = utils.get_boto3_client('secretsmanager', region_name=region)
+
+        # Get secrets (metadata only, no values)
+        paginator = secrets_client.get_paginator('list_secrets')
+
+        for page in paginator.paginate():
+            secrets = page.get('SecretList', [])
+
+            for secret in secrets:
+                secret_name = secret.get('Name', '')
+                secret_arn = secret.get('ARN', '')
+
+                # Description
+                description = secret.get('Description', 'N/A')
+
+                # KMS key
+                kms_key_id = secret.get('KmsKeyId', 'N/A')
+
+                # Rotation enabled
+                rotation_enabled = secret.get('RotationEnabled', False)
+
+                # Rotation Lambda ARN
+                rotation_lambda_arn = secret.get('RotationLambdaARN', 'N/A')
+
+                # Rotation rules
+                rotation_rules = secret.get('RotationRules', {})
+                automatically_after_days = rotation_rules.get('AutomaticallyAfterDays', 'N/A')
+
+                # Last rotated date
+                last_rotated_date = secret.get('LastRotatedDate', '')
+                if last_rotated_date:
+                    last_rotated_date = last_rotated_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_rotated_date, datetime.datetime) else str(last_rotated_date)
+                else:
+                    last_rotated_date = 'Never'
+
+                # Last changed date
+                last_changed_date = secret.get('LastChangedDate', '')
+                if last_changed_date:
+                    last_changed_date = last_changed_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_changed_date, datetime.datetime) else str(last_changed_date)
+
+                # Last accessed date
+                last_accessed_date = secret.get('LastAccessedDate', '')
+                if last_accessed_date:
+                    last_accessed_date = last_accessed_date.strftime('%Y-%m-%d') if isinstance(last_accessed_date, datetime.datetime) else str(last_accessed_date)
+                else:
+                    last_accessed_date = 'Never'
+
+                # Deleted date
+                deleted_date = secret.get('DeletedDate', '')
+                if deleted_date:
+                    deleted_date = deleted_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(deleted_date, datetime.datetime) else str(deleted_date)
+                else:
+                    deleted_date = 'N/A'
+
+                # Created date
+                created_date = secret.get('CreatedDate', '')
+                if created_date:
+                    created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
+
+                # Primary region (for replicated secrets)
+                primary_region = secret.get('PrimaryRegion', region)
+
+                # Tags
+                tags = secret.get('Tags', [])
+                tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
+                tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
+
+                # Owning service
+                owning_service = secret.get('OwningService', 'N/A')
+
+                regional_secrets.append({
+                    'Region': region,
+                    'Secret Name': secret_name,
+                    'Description': description,
+                    'Rotation Enabled': rotation_enabled,
+                    'Rotation Interval (days)': automatically_after_days,
+                    'Rotation Lambda ARN': rotation_lambda_arn,
+                    'Last Rotated': last_rotated_date,
+                    'Last Changed': last_changed_date,
+                    'Last Accessed': last_accessed_date,
+                    'KMS Key ID': kms_key_id,
+                    'Primary Region': primary_region,
+                    'Owning Service': owning_service,
+                    'Deleted Date': deleted_date,
+                    'Created Date': created_date,
+                    'Tags': tags_str,
+                    'Secret ARN': secret_arn
+                })
+
+        utils.log_info(f"Found {len(regional_secrets)} secrets in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error processing region {region} for secrets", e)
+
+    return regional_secrets
+
+
 @utils.aws_error_handler("Collecting Secrets Manager secrets", default_return=[])
 def collect_secrets(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect Secrets Manager secret information from AWS regions.
+    Collect Secrets Manager secret information from AWS regions using concurrent scanning.
 
     SECURITY: This function does NOT retrieve secret values, only metadata.
 
@@ -113,121 +225,96 @@ def collect_secrets(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with secret metadata
     """
     print("\n=== COLLECTING SECRETS MANAGER SECRETS ===")
-    all_secrets = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            secrets_client = utils.get_boto3_client('secretsmanager', region_name=region)
-
-            # Get secrets (metadata only, no values)
-            paginator = secrets_client.get_paginator('list_secrets')
-            secret_count = 0
-
-            for page in paginator.paginate():
-                secrets = page.get('SecretList', [])
-                secret_count += len(secrets)
-
-                for secret in secrets:
-                    secret_name = secret.get('Name', '')
-                    secret_arn = secret.get('ARN', '')
-                    print(f"  Processing secret: {secret_name}")
-
-                    # Description
-                    description = secret.get('Description', 'N/A')
-
-                    # KMS key
-                    kms_key_id = secret.get('KmsKeyId', 'N/A')
-
-                    # Rotation enabled
-                    rotation_enabled = secret.get('RotationEnabled', False)
-
-                    # Rotation Lambda ARN
-                    rotation_lambda_arn = secret.get('RotationLambdaARN', 'N/A')
-
-                    # Rotation rules
-                    rotation_rules = secret.get('RotationRules', {})
-                    automatically_after_days = rotation_rules.get('AutomaticallyAfterDays', 'N/A')
-
-                    # Last rotated date
-                    last_rotated_date = secret.get('LastRotatedDate', '')
-                    if last_rotated_date:
-                        last_rotated_date = last_rotated_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_rotated_date, datetime.datetime) else str(last_rotated_date)
-                    else:
-                        last_rotated_date = 'Never'
-
-                    # Last changed date
-                    last_changed_date = secret.get('LastChangedDate', '')
-                    if last_changed_date:
-                        last_changed_date = last_changed_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_changed_date, datetime.datetime) else str(last_changed_date)
-
-                    # Last accessed date
-                    last_accessed_date = secret.get('LastAccessedDate', '')
-                    if last_accessed_date:
-                        last_accessed_date = last_accessed_date.strftime('%Y-%m-%d') if isinstance(last_accessed_date, datetime.datetime) else str(last_accessed_date)
-                    else:
-                        last_accessed_date = 'Never'
-
-                    # Deleted date
-                    deleted_date = secret.get('DeletedDate', '')
-                    if deleted_date:
-                        deleted_date = deleted_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(deleted_date, datetime.datetime) else str(deleted_date)
-                    else:
-                        deleted_date = 'N/A'
-
-                    # Created date
-                    created_date = secret.get('CreatedDate', '')
-                    if created_date:
-                        created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
-
-                    # Primary region (for replicated secrets)
-                    primary_region = secret.get('PrimaryRegion', region)
-
-                    # Tags
-                    tags = secret.get('Tags', [])
-                    tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
-                    tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
-
-                    # Owning service
-                    owning_service = secret.get('OwningService', 'N/A')
-
-                    all_secrets.append({
-                        'Region': region,
-                        'Secret Name': secret_name,
-                        'Description': description,
-                        'Rotation Enabled': rotation_enabled,
-                        'Rotation Interval (days)': automatically_after_days,
-                        'Rotation Lambda ARN': rotation_lambda_arn,
-                        'Last Rotated': last_rotated_date,
-                        'Last Changed': last_changed_date,
-                        'Last Accessed': last_accessed_date,
-                        'KMS Key ID': kms_key_id,
-                        'Primary Region': primary_region,
-                        'Owning Service': owning_service,
-                        'Deleted Date': deleted_date,
-                        'Created Date': created_date,
-                        'Tags': tags_str,
-                        'Secret ARN': secret_arn
-                    })
-
-            print(f"  Found {secret_count} secrets")
-
-        except Exception as e:
-            utils.log_error(f"Error processing region {region} for secrets", e)
+    # Use concurrent scanning
+    all_secrets = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_secrets_in_region,
+        resource_type="Secrets Manager secrets"
+    )
 
     utils.log_success(f"Total secrets collected: {len(all_secrets)}")
     return all_secrets
 
 
+def scan_secret_versions_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan secret versions in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with version information from this region
+    """
+    regional_versions = []
+
+    try:
+        secrets_client = utils.get_boto3_client('secretsmanager', region_name=region)
+
+        # Get all secrets first
+        secret_paginator = secrets_client.get_paginator('list_secrets')
+
+        for secret_page in secret_paginator.paginate():
+            secrets = secret_page.get('SecretList', [])
+
+            for secret in secrets:
+                secret_name = secret.get('Name', '')
+                secret_arn = secret.get('ARN', '')
+
+                try:
+                    # List versions for this secret
+                    version_response = secrets_client.list_secret_version_ids(
+                        SecretId=secret_arn,
+                        MaxResults=100
+                    )
+
+                    versions = version_response.get('Versions', [])
+
+                    for version in versions:
+                        version_id = version.get('VersionId', '')
+
+                        # Version stages (AWSCURRENT, AWSPREVIOUS, etc.)
+                        version_stages = version.get('VersionStages', [])
+                        version_stages_str = ', '.join(version_stages) if version_stages else 'N/A'
+
+                        # Created date
+                        created_date = version.get('CreatedDate', '')
+                        if created_date:
+                            created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
+
+                        # Last accessed date
+                        last_accessed_date = version.get('LastAccessedDate', '')
+                        if last_accessed_date:
+                            last_accessed_date = last_accessed_date.strftime('%Y-%m-%d') if isinstance(last_accessed_date, datetime.datetime) else str(last_accessed_date)
+                        else:
+                            last_accessed_date = 'Never'
+
+                        regional_versions.append({
+                            'Region': region,
+                            'Secret Name': secret_name,
+                            'Version ID': version_id,
+                            'Version Stages': version_stages_str,
+                            'Created Date': created_date,
+                            'Last Accessed': last_accessed_date
+                        })
+
+                except Exception as e:
+                    utils.log_warning(f"Could not get versions for secret {secret_name} in {region}: {e}")
+
+        utils.log_info(f"Found {len(regional_versions)} secret versions in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting secret versions in region {region}", e)
+
+    return regional_versions
+
+
 @utils.aws_error_handler("Collecting secret versions", default_return=[])
 def collect_secret_versions(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect secret version information from AWS regions.
+    Collect secret version information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -236,78 +323,83 @@ def collect_secret_versions(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with version information
     """
     print("\n=== COLLECTING SECRET VERSIONS ===")
-    all_versions = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            secrets_client = utils.get_boto3_client('secretsmanager', region_name=region)
-
-            # Get all secrets first
-            secret_paginator = secrets_client.get_paginator('list_secrets')
-
-            for secret_page in secret_paginator.paginate():
-                secrets = secret_page.get('SecretList', [])
-
-                for secret in secrets:
-                    secret_name = secret.get('Name', '')
-                    secret_arn = secret.get('ARN', '')
-
-                    try:
-                        # List versions for this secret
-                        version_response = secrets_client.list_secret_version_ids(
-                            SecretId=secret_arn,
-                            MaxResults=100
-                        )
-
-                        versions = version_response.get('Versions', [])
-
-                        for version in versions:
-                            version_id = version.get('VersionId', '')
-
-                            # Version stages (AWSCURRENT, AWSPREVIOUS, etc.)
-                            version_stages = version.get('VersionStages', [])
-                            version_stages_str = ', '.join(version_stages) if version_stages else 'N/A'
-
-                            # Created date
-                            created_date = version.get('CreatedDate', '')
-                            if created_date:
-                                created_date = created_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_date, datetime.datetime) else str(created_date)
-
-                            # Last accessed date
-                            last_accessed_date = version.get('LastAccessedDate', '')
-                            if last_accessed_date:
-                                last_accessed_date = last_accessed_date.strftime('%Y-%m-%d') if isinstance(last_accessed_date, datetime.datetime) else str(last_accessed_date)
-                            else:
-                                last_accessed_date = 'Never'
-
-                            all_versions.append({
-                                'Region': region,
-                                'Secret Name': secret_name,
-                                'Version ID': version_id,
-                                'Version Stages': version_stages_str,
-                                'Created Date': created_date,
-                                'Last Accessed': last_accessed_date
-                            })
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get versions for secret {secret_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting secret versions in region {region}", e)
+    # Use concurrent scanning
+    all_versions = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_secret_versions_in_region,
+        resource_type="secret versions"
+    )
 
     utils.log_success(f"Total secret versions collected: {len(all_versions)}")
     return all_versions
 
 
+def scan_secret_replications_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan secret replications in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with replication configuration from this region
+    """
+    regional_replications = []
+
+    try:
+        secrets_client = utils.get_boto3_client('secretsmanager', region_name=region)
+
+        # Get all secrets first
+        secret_paginator = secrets_client.get_paginator('list_secrets')
+
+        for secret_page in secret_paginator.paginate():
+            secrets = secret_page.get('SecretList', [])
+
+            for secret in secrets:
+                secret_name = secret.get('Name', '')
+                secret_arn = secret.get('ARN', '')
+
+                # Check for replication status
+                replication_status = secret.get('ReplicationStatus', [])
+
+                if replication_status:
+                    for replication in replication_status:
+                        replica_region = replication.get('Region', '')
+                        kms_key_id = replication.get('KmsKeyId', 'N/A')
+                        status = replication.get('Status', '')
+                        status_message = replication.get('StatusMessage', 'N/A')
+
+                        # Last accessed date
+                        last_accessed_date = replication.get('LastAccessedDate', '')
+                        if last_accessed_date:
+                            last_accessed_date = last_accessed_date.strftime('%Y-%m-%d') if isinstance(last_accessed_date, datetime.datetime) else str(last_accessed_date)
+                        else:
+                            last_accessed_date = 'Never'
+
+                        regional_replications.append({
+                            'Source Region': region,
+                            'Secret Name': secret_name,
+                            'Replica Region': replica_region,
+                            'Status': status,
+                            'Status Message': status_message,
+                            'KMS Key ID': kms_key_id,
+                            'Last Accessed': last_accessed_date
+                        })
+
+        utils.log_info(f"Found {len(regional_replications)} secret replications in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting secret replications in region {region}", e)
+
+    return regional_replications
+
+
 @utils.aws_error_handler("Collecting secret replications", default_return=[])
 def collect_secret_replications(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect secret replication information from AWS regions.
+    Collect secret replication information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -316,56 +408,14 @@ def collect_secret_replications(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with replication configuration
     """
     print("\n=== COLLECTING SECRET REPLICATIONS ===")
-    all_replications = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            secrets_client = utils.get_boto3_client('secretsmanager', region_name=region)
-
-            # Get all secrets first
-            secret_paginator = secrets_client.get_paginator('list_secrets')
-
-            for secret_page in secret_paginator.paginate():
-                secrets = secret_page.get('SecretList', [])
-
-                for secret in secrets:
-                    secret_name = secret.get('Name', '')
-                    secret_arn = secret.get('ARN', '')
-
-                    # Check for replication status
-                    replication_status = secret.get('ReplicationStatus', [])
-
-                    if replication_status:
-                        for replication in replication_status:
-                            replica_region = replication.get('Region', '')
-                            kms_key_id = replication.get('KmsKeyId', 'N/A')
-                            status = replication.get('Status', '')
-                            status_message = replication.get('StatusMessage', 'N/A')
-
-                            # Last accessed date
-                            last_accessed_date = replication.get('LastAccessedDate', '')
-                            if last_accessed_date:
-                                last_accessed_date = last_accessed_date.strftime('%Y-%m-%d') if isinstance(last_accessed_date, datetime.datetime) else str(last_accessed_date)
-                            else:
-                                last_accessed_date = 'Never'
-
-                            all_replications.append({
-                                'Source Region': region,
-                                'Secret Name': secret_name,
-                                'Replica Region': replica_region,
-                                'Status': status,
-                                'Status Message': status_message,
-                                'KMS Key ID': kms_key_id,
-                                'Last Accessed': last_accessed_date
-                            })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting secret replications in region {region}", e)
+    # Use concurrent scanning
+    all_replications = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_secret_replications_in_region,
+        resource_type="secret replications"
+    )
 
     utils.log_success(f"Total secret replications collected: {len(all_replications)}")
     return all_replications

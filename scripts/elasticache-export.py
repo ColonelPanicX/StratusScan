@@ -92,10 +92,114 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def scan_replication_groups_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan ElastiCache replication groups (Redis) in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with replication group information from this region
+    """
+    regional_replication_groups = []
+
+    try:
+        elasticache_client = utils.get_boto3_client('elasticache', region_name=region)
+
+        paginator = elasticache_client.get_paginator('describe_replication_groups')
+        for page in paginator.paginate():
+            replication_groups = page.get('ReplicationGroups', [])
+
+            for rg in replication_groups:
+                rg_id = rg.get('ReplicationGroupId', 'N/A')
+
+                print(f"  Processing replication group: {rg_id}")
+
+                # Basic info
+                description = rg.get('Description', 'N/A')
+                status = rg.get('Status', 'UNKNOWN')
+
+                # Cluster mode
+                cluster_enabled = rg.get('ClusterEnabled', False)
+
+                # Member clusters
+                member_clusters = rg.get('MemberClusters', [])
+                member_count = len(member_clusters)
+
+                # Node type
+                cache_node_type = rg.get('CacheNodeType', 'N/A')
+
+                # Engine
+                engine = 'redis'  # Replication groups are always Redis
+                engine_version = rg.get('EngineVersion', 'N/A')
+
+                # Automatic failover
+                automatic_failover = rg.get('AutomaticFailover', 'disabled')
+
+                # Multi-AZ
+                multi_az = rg.get('MultiAZ', 'disabled')
+
+                # Snapshot retention
+                snapshot_retention_limit = rg.get('SnapshotRetentionLimit', 0)
+                snapshot_window = rg.get('SnapshotWindow', 'N/A')
+
+                # Encryption
+                at_rest_encryption = rg.get('AtRestEncryptionEnabled', False)
+                transit_encryption = rg.get('TransitEncryptionEnabled', False)
+                auth_token_enabled = rg.get('AuthTokenEnabled', False)
+
+                # Parameter group
+                cache_param_group_name = rg.get('CacheParameterGroup', {}).get('CacheParameterGroupName', 'N/A')
+
+                # Subnet group
+                cache_subnet_group = 'N/A'
+                node_groups = rg.get('NodeGroups', [])
+                if node_groups:
+                    for node_group in node_groups:
+                        primary_endpoint = node_group.get('PrimaryEndpoint', {})
+                        reader_endpoint = node_group.get('ReaderEndpoint', {})
+
+                        # Get subnet group from first node group
+                        if not cache_subnet_group or cache_subnet_group == 'N/A':
+                            cache_subnet_group = 'default'  # Will be populated from member clusters if available
+
+                # ARN
+                arn = rg.get('ARN', 'N/A')
+
+                regional_replication_groups.append({
+                    'Region': region,
+                    'Replication Group ID': rg_id,
+                    'Description': description,
+                    'Status': status,
+                    'Engine': engine,
+                    'Engine Version': engine_version,
+                    'Node Type': cache_node_type,
+                    'Cluster Mode': 'Enabled' if cluster_enabled else 'Disabled',
+                    'Member Clusters': member_count,
+                    'Automatic Failover': automatic_failover.upper(),
+                    'Multi-AZ': multi_az.upper(),
+                    'Snapshot Retention (days)': snapshot_retention_limit,
+                    'Snapshot Window': snapshot_window,
+                    'Encryption at Rest': 'Yes' if at_rest_encryption else 'No',
+                    'Encryption in Transit': 'Yes' if transit_encryption else 'No',
+                    'Auth Token Enabled': 'Yes' if auth_token_enabled else 'No',
+                    'Parameter Group': cache_param_group_name,
+                    'ARN': arn
+                })
+
+        utils.log_info(f"Found {len(regional_replication_groups)} ElastiCache replication groups in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting replication groups in region {region}", e)
+
+    return regional_replication_groups
+
+
 @utils.aws_error_handler("Collecting ElastiCache replication groups", default_return=[])
 def collect_replication_groups(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect ElastiCache replication group (Redis) information from AWS regions.
+    Collect ElastiCache replication group (Redis) information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -104,109 +208,112 @@ def collect_replication_groups(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with replication group information
     """
     print("\n=== COLLECTING ELASTICACHE REPLICATION GROUPS (Redis) ===")
-    all_replication_groups = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            elasticache_client = utils.get_boto3_client('elasticache', region_name=region)
-
-            paginator = elasticache_client.get_paginator('describe_replication_groups')
-            for page in paginator.paginate():
-                replication_groups = page.get('ReplicationGroups', [])
-
-                for rg in replication_groups:
-                    rg_id = rg.get('ReplicationGroupId', 'N/A')
-
-                    print(f"  Processing replication group: {rg_id}")
-
-                    # Basic info
-                    description = rg.get('Description', 'N/A')
-                    status = rg.get('Status', 'UNKNOWN')
-
-                    # Cluster mode
-                    cluster_enabled = rg.get('ClusterEnabled', False)
-
-                    # Member clusters
-                    member_clusters = rg.get('MemberClusters', [])
-                    member_count = len(member_clusters)
-
-                    # Node type
-                    cache_node_type = rg.get('CacheNodeType', 'N/A')
-
-                    # Engine
-                    engine = 'redis'  # Replication groups are always Redis
-                    engine_version = rg.get('EngineVersion', 'N/A')
-
-                    # Automatic failover
-                    automatic_failover = rg.get('AutomaticFailover', 'disabled')
-
-                    # Multi-AZ
-                    multi_az = rg.get('MultiAZ', 'disabled')
-
-                    # Snapshot retention
-                    snapshot_retention_limit = rg.get('SnapshotRetentionLimit', 0)
-                    snapshot_window = rg.get('SnapshotWindow', 'N/A')
-
-                    # Encryption
-                    at_rest_encryption = rg.get('AtRestEncryptionEnabled', False)
-                    transit_encryption = rg.get('TransitEncryptionEnabled', False)
-                    auth_token_enabled = rg.get('AuthTokenEnabled', False)
-
-                    # Parameter group
-                    cache_param_group_name = rg.get('CacheParameterGroup', {}).get('CacheParameterGroupName', 'N/A')
-
-                    # Subnet group
-                    cache_subnet_group = 'N/A'
-                    node_groups = rg.get('NodeGroups', [])
-                    if node_groups:
-                        for node_group in node_groups:
-                            primary_endpoint = node_group.get('PrimaryEndpoint', {})
-                            reader_endpoint = node_group.get('ReaderEndpoint', {})
-
-                            # Get subnet group from first node group
-                            if not cache_subnet_group or cache_subnet_group == 'N/A':
-                                cache_subnet_group = 'default'  # Will be populated from member clusters if available
-
-                    # ARN
-                    arn = rg.get('ARN', 'N/A')
-
-                    all_replication_groups.append({
-                        'Region': region,
-                        'Replication Group ID': rg_id,
-                        'Description': description,
-                        'Status': status,
-                        'Engine': engine,
-                        'Engine Version': engine_version,
-                        'Node Type': cache_node_type,
-                        'Cluster Mode': 'Enabled' if cluster_enabled else 'Disabled',
-                        'Member Clusters': member_count,
-                        'Automatic Failover': automatic_failover.upper(),
-                        'Multi-AZ': multi_az.upper(),
-                        'Snapshot Retention (days)': snapshot_retention_limit,
-                        'Snapshot Window': snapshot_window,
-                        'Encryption at Rest': 'Yes' if at_rest_encryption else 'No',
-                        'Encryption in Transit': 'Yes' if transit_encryption else 'No',
-                        'Auth Token Enabled': 'Yes' if auth_token_enabled else 'No',
-                        'Parameter Group': cache_param_group_name,
-                        'ARN': arn
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting replication groups in region {region}", e)
+    # Use concurrent scanning
+    all_replication_groups = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_replication_groups_in_region,
+        resource_type="ElastiCache replication groups"
+    )
 
     utils.log_success(f"Total ElastiCache replication groups collected: {len(all_replication_groups)}")
     return all_replication_groups
 
 
+def scan_cache_clusters_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan ElastiCache cache clusters in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with cache cluster information from this region
+    """
+    regional_clusters = []
+
+    try:
+        elasticache_client = utils.get_boto3_client('elasticache', region_name=region)
+
+        paginator = elasticache_client.get_paginator('describe_cache_clusters')
+        for page in paginator.paginate(ShowCacheNodeInfo=True):
+            cache_clusters = page.get('CacheClusters', [])
+
+            for cluster in cache_clusters:
+                cluster_id = cluster.get('CacheClusterId', 'N/A')
+
+                print(f"  Processing cache cluster: {cluster_id}")
+
+                # Basic info
+                engine = cluster.get('Engine', 'N/A')
+                engine_version = cluster.get('EngineVersion', 'N/A')
+                status = cluster.get('CacheClusterStatus', 'UNKNOWN')
+
+                # Node info
+                cache_node_type = cluster.get('CacheNodeType', 'N/A')
+                num_cache_nodes = cluster.get('NumCacheNodes', 0)
+
+                # Preferred AZ
+                preferred_az = cluster.get('PreferredAvailabilityZone', 'N/A')
+
+                # Creation time
+                creation_time = cluster.get('CacheClusterCreateTime', '')
+                if creation_time:
+                    creation_time = creation_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_time, datetime.datetime) else str(creation_time)
+
+                # Parameter group
+                param_group = cluster.get('CacheParameterGroup', {}).get('CacheParameterGroupName', 'N/A')
+
+                # Subnet group
+                subnet_group = cluster.get('CacheSubnetGroupName', 'N/A')
+
+                # Security groups
+                security_groups = cluster.get('SecurityGroups', [])
+                sg_ids = ', '.join([sg.get('SecurityGroupId', '') for sg in security_groups]) if security_groups else 'None'
+
+                # Replication group membership
+                replication_group_id = cluster.get('ReplicationGroupId', 'None')
+
+                # Endpoint
+                endpoint = cluster.get('ConfigurationEndpoint', cluster.get('CacheNodes', [{}])[0].get('Endpoint', {}))
+                endpoint_address = endpoint.get('Address', 'N/A') if endpoint else 'N/A'
+                endpoint_port = endpoint.get('Port', 'N/A') if endpoint else 'N/A'
+
+                # ARN
+                arn = cluster.get('ARN', 'N/A')
+
+                regional_clusters.append({
+                    'Region': region,
+                    'Cluster ID': cluster_id,
+                    'Engine': engine,
+                    'Engine Version': engine_version,
+                    'Status': status,
+                    'Node Type': cache_node_type,
+                    'Number of Nodes': num_cache_nodes,
+                    'Availability Zone': preferred_az,
+                    'Replication Group': replication_group_id,
+                    'Parameter Group': param_group,
+                    'Subnet Group': subnet_group,
+                    'Security Groups': sg_ids,
+                    'Endpoint Address': endpoint_address,
+                    'Endpoint Port': endpoint_port,
+                    'Created Date': creation_time if creation_time else 'N/A',
+                    'ARN': arn
+                })
+
+        utils.log_info(f"Found {len(regional_clusters)} ElastiCache cache clusters in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting cache clusters in region {region}", e)
+
+    return regional_clusters
+
+
 @utils.aws_error_handler("Collecting ElastiCache clusters", default_return=[])
 def collect_cache_clusters(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect ElastiCache cache cluster information from AWS regions.
+    Collect ElastiCache cache cluster information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -215,94 +322,84 @@ def collect_cache_clusters(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with cache cluster information
     """
     print("\n=== COLLECTING ELASTICACHE CACHE CLUSTERS ===")
-    all_clusters = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            elasticache_client = utils.get_boto3_client('elasticache', region_name=region)
-
-            paginator = elasticache_client.get_paginator('describe_cache_clusters')
-            for page in paginator.paginate(ShowCacheNodeInfo=True):
-                cache_clusters = page.get('CacheClusters', [])
-
-                for cluster in cache_clusters:
-                    cluster_id = cluster.get('CacheClusterId', 'N/A')
-
-                    print(f"  Processing cache cluster: {cluster_id}")
-
-                    # Basic info
-                    engine = cluster.get('Engine', 'N/A')
-                    engine_version = cluster.get('EngineVersion', 'N/A')
-                    status = cluster.get('CacheClusterStatus', 'UNKNOWN')
-
-                    # Node info
-                    cache_node_type = cluster.get('CacheNodeType', 'N/A')
-                    num_cache_nodes = cluster.get('NumCacheNodes', 0)
-
-                    # Preferred AZ
-                    preferred_az = cluster.get('PreferredAvailabilityZone', 'N/A')
-
-                    # Creation time
-                    creation_time = cluster.get('CacheClusterCreateTime', '')
-                    if creation_time:
-                        creation_time = creation_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_time, datetime.datetime) else str(creation_time)
-
-                    # Parameter group
-                    param_group = cluster.get('CacheParameterGroup', {}).get('CacheParameterGroupName', 'N/A')
-
-                    # Subnet group
-                    subnet_group = cluster.get('CacheSubnetGroupName', 'N/A')
-
-                    # Security groups
-                    security_groups = cluster.get('SecurityGroups', [])
-                    sg_ids = ', '.join([sg.get('SecurityGroupId', '') for sg in security_groups]) if security_groups else 'None'
-
-                    # Replication group membership
-                    replication_group_id = cluster.get('ReplicationGroupId', 'None')
-
-                    # Endpoint
-                    endpoint = cluster.get('ConfigurationEndpoint', cluster.get('CacheNodes', [{}])[0].get('Endpoint', {}))
-                    endpoint_address = endpoint.get('Address', 'N/A') if endpoint else 'N/A'
-                    endpoint_port = endpoint.get('Port', 'N/A') if endpoint else 'N/A'
-
-                    # ARN
-                    arn = cluster.get('ARN', 'N/A')
-
-                    all_clusters.append({
-                        'Region': region,
-                        'Cluster ID': cluster_id,
-                        'Engine': engine,
-                        'Engine Version': engine_version,
-                        'Status': status,
-                        'Node Type': cache_node_type,
-                        'Number of Nodes': num_cache_nodes,
-                        'Availability Zone': preferred_az,
-                        'Replication Group': replication_group_id,
-                        'Parameter Group': param_group,
-                        'Subnet Group': subnet_group,
-                        'Security Groups': sg_ids,
-                        'Endpoint Address': endpoint_address,
-                        'Endpoint Port': endpoint_port,
-                        'Created Date': creation_time if creation_time else 'N/A',
-                        'ARN': arn
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting cache clusters in region {region}", e)
+    # Use concurrent scanning
+    all_clusters = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_cache_clusters_in_region,
+        resource_type="ElastiCache cache clusters"
+    )
 
     utils.log_success(f"Total ElastiCache cache clusters collected: {len(all_clusters)}")
     return all_clusters
 
 
+def scan_cache_subnet_groups_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan ElastiCache cache subnet groups in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with subnet group information from this region
+    """
+    regional_subnet_groups = []
+
+    try:
+        elasticache_client = utils.get_boto3_client('elasticache', region_name=region)
+
+        paginator = elasticache_client.get_paginator('describe_cache_subnet_groups')
+        for page in paginator.paginate():
+            subnet_groups = page.get('CacheSubnetGroups', [])
+
+            for sg in subnet_groups:
+                sg_name = sg.get('CacheSubnetGroupName', 'N/A')
+
+                print(f"  Processing subnet group: {sg_name}")
+
+                # Description
+                description = sg.get('CacheSubnetGroupDescription', 'N/A')
+
+                # VPC ID
+                vpc_id = sg.get('VpcId', 'N/A')
+
+                # Subnets
+                subnets = sg.get('Subnets', [])
+                subnet_count = len(subnets)
+                subnet_ids = ', '.join([s.get('SubnetIdentifier', '') for s in subnets])
+
+                # Availability zones
+                azs = set([s.get('SubnetAvailabilityZone', {}).get('Name', '') for s in subnets if s.get('SubnetAvailabilityZone')])
+                az_list = ', '.join(sorted(azs)) if azs else 'N/A'
+
+                # ARN
+                arn = sg.get('ARN', 'N/A')
+
+                regional_subnet_groups.append({
+                    'Region': region,
+                    'Subnet Group Name': sg_name,
+                    'Description': description,
+                    'VPC ID': vpc_id,
+                    'Subnet Count': subnet_count,
+                    'Subnet IDs': subnet_ids,
+                    'Availability Zones': az_list,
+                    'ARN': arn
+                })
+
+        utils.log_info(f"Found {len(regional_subnet_groups)} ElastiCache subnet groups in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting subnet groups in region {region}", e)
+
+    return regional_subnet_groups
+
+
 @utils.aws_error_handler("Collecting ElastiCache subnet groups", default_return=[])
 def collect_cache_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect ElastiCache cache subnet group information from AWS regions.
+    Collect ElastiCache cache subnet group information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -311,57 +408,14 @@ def collect_cache_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with subnet group information
     """
     print("\n=== COLLECTING ELASTICACHE SUBNET GROUPS ===")
-    all_subnet_groups = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            elasticache_client = utils.get_boto3_client('elasticache', region_name=region)
-
-            paginator = elasticache_client.get_paginator('describe_cache_subnet_groups')
-            for page in paginator.paginate():
-                subnet_groups = page.get('CacheSubnetGroups', [])
-
-                for sg in subnet_groups:
-                    sg_name = sg.get('CacheSubnetGroupName', 'N/A')
-
-                    print(f"  Processing subnet group: {sg_name}")
-
-                    # Description
-                    description = sg.get('CacheSubnetGroupDescription', 'N/A')
-
-                    # VPC ID
-                    vpc_id = sg.get('VpcId', 'N/A')
-
-                    # Subnets
-                    subnets = sg.get('Subnets', [])
-                    subnet_count = len(subnets)
-                    subnet_ids = ', '.join([s.get('SubnetIdentifier', '') for s in subnets])
-
-                    # Availability zones
-                    azs = set([s.get('SubnetAvailabilityZone', {}).get('Name', '') for s in subnets if s.get('SubnetAvailabilityZone')])
-                    az_list = ', '.join(sorted(azs)) if azs else 'N/A'
-
-                    # ARN
-                    arn = sg.get('ARN', 'N/A')
-
-                    all_subnet_groups.append({
-                        'Region': region,
-                        'Subnet Group Name': sg_name,
-                        'Description': description,
-                        'VPC ID': vpc_id,
-                        'Subnet Count': subnet_count,
-                        'Subnet IDs': subnet_ids,
-                        'Availability Zones': az_list,
-                        'ARN': arn
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting subnet groups in region {region}", e)
+    # Use concurrent scanning
+    all_subnet_groups = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_cache_subnet_groups_in_region,
+        resource_type="ElastiCache subnet groups"
+    )
 
     utils.log_success(f"Total ElastiCache subnet groups collected: {len(all_subnet_groups)}")
     return all_subnet_groups

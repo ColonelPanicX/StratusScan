@@ -92,10 +92,144 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def scan_dynamodb_tables_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan DynamoDB tables in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with table information from this region
+    """
+    regional_tables = []
+
+    try:
+        dynamodb_client = utils.get_boto3_client('dynamodb', region_name=region)
+
+        # List tables
+        paginator = dynamodb_client.get_paginator('list_tables')
+        for page in paginator.paginate():
+            table_names = page.get('TableNames', [])
+
+            for table_name in table_names:
+                print(f"  Processing table: {table_name}")
+
+                try:
+                    # Get table details
+                    table_response = dynamodb_client.describe_table(TableName=table_name)
+                    table = table_response.get('Table', {})
+
+                    # Basic info
+                    table_arn = table.get('TableArn', 'N/A')
+                    table_status = table.get('TableStatus', 'UNKNOWN')
+                    creation_date = table.get('CreationDateTime', '')
+                    if creation_date:
+                        creation_date = creation_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_date, datetime.datetime) else str(creation_date)
+
+                    # Item count and size
+                    item_count = table.get('ItemCount', 0)
+                    table_size_bytes = table.get('TableSizeBytes', 0)
+                    table_size_mb = round(table_size_bytes / (1024 * 1024), 2)
+
+                    # Billing mode
+                    billing_mode_summary = table.get('BillingModeSummary', {})
+                    billing_mode = billing_mode_summary.get('BillingMode', 'PROVISIONED')
+
+                    # Provisioned throughput
+                    provisioned_throughput = table.get('ProvisionedThroughput', {})
+                    read_capacity = provisioned_throughput.get('ReadCapacityUnits', 0)
+                    write_capacity = provisioned_throughput.get('WriteCapacityUnits', 0)
+
+                    # Key schema
+                    key_schema = table.get('KeySchema', [])
+                    partition_key = 'N/A'
+                    sort_key = 'N/A'
+                    for key in key_schema:
+                        if key.get('KeyType') == 'HASH':
+                            partition_key = key.get('AttributeName', 'N/A')
+                        elif key.get('KeyType') == 'RANGE':
+                            sort_key = key.get('AttributeName', 'N/A')
+
+                    # Global Secondary Indexes
+                    gsi_list = table.get('GlobalSecondaryIndexes', [])
+                    gsi_count = len(gsi_list)
+
+                    # Local Secondary Indexes
+                    lsi_list = table.get('LocalSecondaryIndexes', [])
+                    lsi_count = len(lsi_list)
+
+                    # Stream specification
+                    stream_spec = table.get('StreamSpecification', {})
+                    stream_enabled = stream_spec.get('StreamEnabled', False)
+                    stream_view_type = stream_spec.get('StreamViewType', 'N/A') if stream_enabled else 'N/A'
+
+                    # SSE (encryption)
+                    sse_description = table.get('SSEDescription', {})
+                    sse_status = sse_description.get('Status', 'DISABLED')
+                    sse_type = sse_description.get('SSEType', 'N/A') if sse_status == 'ENABLED' else 'N/A'
+                    kms_key_arn = sse_description.get('KMSMasterKeyArn', 'N/A') if sse_type == 'KMS' else 'N/A'
+
+                    # Point-in-time recovery
+                    try:
+                        pitr_response = dynamodb_client.describe_continuous_backups(TableName=table_name)
+                        continuous_backups = pitr_response.get('ContinuousBackupsDescription', {})
+                        pitr_status = continuous_backups.get('PointInTimeRecoveryDescription', {}).get('PointInTimeRecoveryStatus', 'DISABLED')
+                    except Exception:
+                        pitr_status = 'UNKNOWN'
+
+                    # Table class
+                    table_class_summary = table.get('TableClassSummary', {})
+                    table_class = table_class_summary.get('TableClass', 'STANDARD')
+
+                    # Tags
+                    try:
+                        tags_response = dynamodb_client.list_tags_of_resource(ResourceArn=table_arn)
+                        tags = tags_response.get('Tags', [])
+                        tags_str = ', '.join([f"{t['Key']}={t['Value']}" for t in tags]) if tags else 'None'
+                    except Exception:
+                        tags_str = 'Error retrieving'
+
+                    regional_tables.append({
+                        'Region': region,
+                        'Table Name': table_name,
+                        'Status': table_status,
+                        'Billing Mode': billing_mode,
+                        'Read Capacity': read_capacity if billing_mode == 'PROVISIONED' else 'On-Demand',
+                        'Write Capacity': write_capacity if billing_mode == 'PROVISIONED' else 'On-Demand',
+                        'Item Count': item_count,
+                        'Table Size (MB)': table_size_mb,
+                        'Partition Key': partition_key,
+                        'Sort Key': sort_key if sort_key != 'N/A' else 'None',
+                        'GSI Count': gsi_count,
+                        'LSI Count': lsi_count,
+                        'Stream Enabled': stream_enabled,
+                        'Stream View Type': stream_view_type,
+                        'Encryption Status': sse_status,
+                        'Encryption Type': sse_type,
+                        'KMS Key ARN': kms_key_arn,
+                        'PITR Status': pitr_status,
+                        'Table Class': table_class,
+                        'Created Date': creation_date if creation_date else 'N/A',
+                        'Tags': tags_str,
+                        'Table ARN': table_arn
+                    })
+
+                except Exception as e:
+                    utils.log_warning(f"Could not get details for table {table_name}: {e}")
+
+        utils.log_info(f"Found {len(regional_tables)} DynamoDB tables in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error processing region {region} for DynamoDB tables", e)
+
+    return regional_tables
+
+
 @utils.aws_error_handler("Collecting DynamoDB tables", default_return=[])
 def collect_dynamodb_tables(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect DynamoDB table information from AWS regions.
+    Collect DynamoDB table information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -104,139 +238,114 @@ def collect_dynamodb_tables(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with table information
     """
     print("\n=== COLLECTING DYNAMODB TABLES ===")
-    all_tables = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            dynamodb_client = utils.get_boto3_client('dynamodb', region_name=region)
-
-            # List tables
-            paginator = dynamodb_client.get_paginator('list_tables')
-            for page in paginator.paginate():
-                table_names = page.get('TableNames', [])
-
-                for table_name in table_names:
-                    print(f"  Processing table: {table_name}")
-
-                    try:
-                        # Get table details
-                        table_response = dynamodb_client.describe_table(TableName=table_name)
-                        table = table_response.get('Table', {})
-
-                        # Basic info
-                        table_arn = table.get('TableArn', 'N/A')
-                        table_status = table.get('TableStatus', 'UNKNOWN')
-                        creation_date = table.get('CreationDateTime', '')
-                        if creation_date:
-                            creation_date = creation_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_date, datetime.datetime) else str(creation_date)
-
-                        # Item count and size
-                        item_count = table.get('ItemCount', 0)
-                        table_size_bytes = table.get('TableSizeBytes', 0)
-                        table_size_mb = round(table_size_bytes / (1024 * 1024), 2)
-
-                        # Billing mode
-                        billing_mode_summary = table.get('BillingModeSummary', {})
-                        billing_mode = billing_mode_summary.get('BillingMode', 'PROVISIONED')
-
-                        # Provisioned throughput
-                        provisioned_throughput = table.get('ProvisionedThroughput', {})
-                        read_capacity = provisioned_throughput.get('ReadCapacityUnits', 0)
-                        write_capacity = provisioned_throughput.get('WriteCapacityUnits', 0)
-
-                        # Key schema
-                        key_schema = table.get('KeySchema', [])
-                        partition_key = 'N/A'
-                        sort_key = 'N/A'
-                        for key in key_schema:
-                            if key.get('KeyType') == 'HASH':
-                                partition_key = key.get('AttributeName', 'N/A')
-                            elif key.get('KeyType') == 'RANGE':
-                                sort_key = key.get('AttributeName', 'N/A')
-
-                        # Global Secondary Indexes
-                        gsi_list = table.get('GlobalSecondaryIndexes', [])
-                        gsi_count = len(gsi_list)
-
-                        # Local Secondary Indexes
-                        lsi_list = table.get('LocalSecondaryIndexes', [])
-                        lsi_count = len(lsi_list)
-
-                        # Stream specification
-                        stream_spec = table.get('StreamSpecification', {})
-                        stream_enabled = stream_spec.get('StreamEnabled', False)
-                        stream_view_type = stream_spec.get('StreamViewType', 'N/A') if stream_enabled else 'N/A'
-
-                        # SSE (encryption)
-                        sse_description = table.get('SSEDescription', {})
-                        sse_status = sse_description.get('Status', 'DISABLED')
-                        sse_type = sse_description.get('SSEType', 'N/A') if sse_status == 'ENABLED' else 'N/A'
-                        kms_key_arn = sse_description.get('KMSMasterKeyArn', 'N/A') if sse_type == 'KMS' else 'N/A'
-
-                        # Point-in-time recovery
-                        try:
-                            pitr_response = dynamodb_client.describe_continuous_backups(TableName=table_name)
-                            continuous_backups = pitr_response.get('ContinuousBackupsDescription', {})
-                            pitr_status = continuous_backups.get('PointInTimeRecoveryDescription', {}).get('PointInTimeRecoveryStatus', 'DISABLED')
-                        except Exception:
-                            pitr_status = 'UNKNOWN'
-
-                        # Table class
-                        table_class_summary = table.get('TableClassSummary', {})
-                        table_class = table_class_summary.get('TableClass', 'STANDARD')
-
-                        # Tags
-                        try:
-                            tags_response = dynamodb_client.list_tags_of_resource(ResourceArn=table_arn)
-                            tags = tags_response.get('Tags', [])
-                            tags_str = ', '.join([f"{t['Key']}={t['Value']}" for t in tags]) if tags else 'None'
-                        except Exception:
-                            tags_str = 'Error retrieving'
-
-                        all_tables.append({
-                            'Region': region,
-                            'Table Name': table_name,
-                            'Status': table_status,
-                            'Billing Mode': billing_mode,
-                            'Read Capacity': read_capacity if billing_mode == 'PROVISIONED' else 'On-Demand',
-                            'Write Capacity': write_capacity if billing_mode == 'PROVISIONED' else 'On-Demand',
-                            'Item Count': item_count,
-                            'Table Size (MB)': table_size_mb,
-                            'Partition Key': partition_key,
-                            'Sort Key': sort_key if sort_key != 'N/A' else 'None',
-                            'GSI Count': gsi_count,
-                            'LSI Count': lsi_count,
-                            'Stream Enabled': stream_enabled,
-                            'Stream View Type': stream_view_type,
-                            'Encryption Status': sse_status,
-                            'Encryption Type': sse_type,
-                            'KMS Key ARN': kms_key_arn,
-                            'PITR Status': pitr_status,
-                            'Table Class': table_class,
-                            'Created Date': creation_date if creation_date else 'N/A',
-                            'Tags': tags_str,
-                            'Table ARN': table_arn
-                        })
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get details for table {table_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting DynamoDB tables in region {region}", e)
+    # Use concurrent scanning
+    all_tables = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_dynamodb_tables_in_region,
+        resource_type="DynamoDB tables"
+    )
 
     utils.log_success(f"Total DynamoDB tables collected: {len(all_tables)}")
     return all_tables
 
 
+def scan_global_secondary_indexes_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan DynamoDB Global Secondary Indexes in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with GSI information from this region
+    """
+    regional_gsis = []
+
+    try:
+        dynamodb_client = utils.get_boto3_client('dynamodb', region_name=region)
+
+        # List tables
+        table_names_response = dynamodb_client.list_tables()
+        table_names = table_names_response.get('TableNames', [])
+
+        for table_name in table_names:
+            try:
+                # Get table details
+                table_response = dynamodb_client.describe_table(TableName=table_name)
+                table = table_response.get('Table', {})
+
+                # Get GSIs
+                gsi_list = table.get('GlobalSecondaryIndexes', [])
+
+                for gsi in gsi_list:
+                    gsi_name = gsi.get('IndexName', 'N/A')
+
+                    print(f"  Processing GSI: {table_name}/{gsi_name}")
+
+                    # Key schema
+                    key_schema = gsi.get('KeySchema', [])
+                    partition_key = 'N/A'
+                    sort_key = 'N/A'
+                    for key in key_schema:
+                        if key.get('KeyType') == 'HASH':
+                            partition_key = key.get('AttributeName', 'N/A')
+                        elif key.get('KeyType') == 'RANGE':
+                            sort_key = key.get('AttributeName', 'N/A')
+
+                    # Projection
+                    projection = gsi.get('Projection', {})
+                    projection_type = projection.get('ProjectionType', 'N/A')
+
+                    # Provisioned throughput
+                    provisioned_throughput = gsi.get('ProvisionedThroughput', {})
+                    read_capacity = provisioned_throughput.get('ReadCapacityUnits', 0)
+                    write_capacity = provisioned_throughput.get('WriteCapacityUnits', 0)
+
+                    # Status
+                    index_status = gsi.get('IndexStatus', 'UNKNOWN')
+
+                    # Size
+                    index_size_bytes = gsi.get('IndexSizeBytes', 0)
+                    index_size_mb = round(index_size_bytes / (1024 * 1024), 2)
+
+                    # Item count
+                    item_count = gsi.get('ItemCount', 0)
+
+                    # ARN
+                    index_arn = gsi.get('IndexArn', 'N/A')
+
+                    regional_gsis.append({
+                        'Region': region,
+                        'Table Name': table_name,
+                        'Index Name': gsi_name,
+                        'Status': index_status,
+                        'Partition Key': partition_key,
+                        'Sort Key': sort_key if sort_key != 'N/A' else 'None',
+                        'Projection Type': projection_type,
+                        'Read Capacity': read_capacity,
+                        'Write Capacity': write_capacity,
+                        'Item Count': item_count,
+                        'Index Size (MB)': index_size_mb,
+                        'Index ARN': index_arn
+                    })
+
+            except Exception as e:
+                utils.log_warning(f"Could not get GSIs for table {table_name}: {e}")
+
+        utils.log_info(f"Found {len(regional_gsis)} Global Secondary Indexes in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting GSIs in region {region}", e)
+
+    return regional_gsis
+
+
 @utils.aws_error_handler("Collecting Global Secondary Indexes", default_return=[])
 def collect_global_secondary_indexes(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect DynamoDB Global Secondary Index information from AWS regions.
+    Collect DynamoDB Global Secondary Index information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -245,96 +354,87 @@ def collect_global_secondary_indexes(regions: List[str]) -> List[Dict[str, Any]]
         list: List of dictionaries with GSI information
     """
     print("\n=== COLLECTING GLOBAL SECONDARY INDEXES ===")
-    all_gsis = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            dynamodb_client = utils.get_boto3_client('dynamodb', region_name=region)
-
-            # List tables
-            table_names_response = dynamodb_client.list_tables()
-            table_names = table_names_response.get('TableNames', [])
-
-            for table_name in table_names:
-                try:
-                    # Get table details
-                    table_response = dynamodb_client.describe_table(TableName=table_name)
-                    table = table_response.get('Table', {})
-
-                    # Get GSIs
-                    gsi_list = table.get('GlobalSecondaryIndexes', [])
-
-                    for gsi in gsi_list:
-                        gsi_name = gsi.get('IndexName', 'N/A')
-
-                        print(f"  Processing GSI: {table_name}/{gsi_name}")
-
-                        # Key schema
-                        key_schema = gsi.get('KeySchema', [])
-                        partition_key = 'N/A'
-                        sort_key = 'N/A'
-                        for key in key_schema:
-                            if key.get('KeyType') == 'HASH':
-                                partition_key = key.get('AttributeName', 'N/A')
-                            elif key.get('KeyType') == 'RANGE':
-                                sort_key = key.get('AttributeName', 'N/A')
-
-                        # Projection
-                        projection = gsi.get('Projection', {})
-                        projection_type = projection.get('ProjectionType', 'N/A')
-
-                        # Provisioned throughput
-                        provisioned_throughput = gsi.get('ProvisionedThroughput', {})
-                        read_capacity = provisioned_throughput.get('ReadCapacityUnits', 0)
-                        write_capacity = provisioned_throughput.get('WriteCapacityUnits', 0)
-
-                        # Status
-                        index_status = gsi.get('IndexStatus', 'UNKNOWN')
-
-                        # Size
-                        index_size_bytes = gsi.get('IndexSizeBytes', 0)
-                        index_size_mb = round(index_size_bytes / (1024 * 1024), 2)
-
-                        # Item count
-                        item_count = gsi.get('ItemCount', 0)
-
-                        # ARN
-                        index_arn = gsi.get('IndexArn', 'N/A')
-
-                        all_gsis.append({
-                            'Region': region,
-                            'Table Name': table_name,
-                            'Index Name': gsi_name,
-                            'Status': index_status,
-                            'Partition Key': partition_key,
-                            'Sort Key': sort_key if sort_key != 'N/A' else 'None',
-                            'Projection Type': projection_type,
-                            'Read Capacity': read_capacity,
-                            'Write Capacity': write_capacity,
-                            'Item Count': item_count,
-                            'Index Size (MB)': index_size_mb,
-                            'Index ARN': index_arn
-                        })
-
-                except Exception as e:
-                    utils.log_warning(f"Could not get GSIs for table {table_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting GSIs in region {region}", e)
+    # Use concurrent scanning
+    all_gsis = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_global_secondary_indexes_in_region,
+        resource_type="Global Secondary Indexes"
+    )
 
     utils.log_success(f"Total Global Secondary Indexes collected: {len(all_gsis)}")
     return all_gsis
 
 
+def scan_dynamodb_backups_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan DynamoDB backups in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with backup information from this region
+    """
+    regional_backups = []
+
+    try:
+        dynamodb_client = utils.get_boto3_client('dynamodb', region_name=region)
+
+        # List backups
+        paginator = dynamodb_client.get_paginator('list_backups')
+        for page in paginator.paginate():
+            backup_summaries = page.get('BackupSummaries', [])
+
+            for backup_summary in backup_summaries:
+                backup_name = backup_summary.get('BackupName', 'N/A')
+                table_name = backup_summary.get('TableName', 'N/A')
+
+                print(f"  Processing backup: {backup_name}")
+
+                # Backup details
+                backup_arn = backup_summary.get('BackupArn', 'N/A')
+                backup_status = backup_summary.get('BackupStatus', 'UNKNOWN')
+                backup_type = backup_summary.get('BackupType', 'N/A')
+
+                # Dates
+                backup_creation = backup_summary.get('BackupCreationDateTime', '')
+                if backup_creation:
+                    backup_creation = backup_creation.strftime('%Y-%m-%d %H:%M:%S') if isinstance(backup_creation, datetime.datetime) else str(backup_creation)
+
+                backup_expiry = backup_summary.get('BackupExpiryDateTime', '')
+                if backup_expiry:
+                    backup_expiry = backup_expiry.strftime('%Y-%m-%d %H:%M:%S') if isinstance(backup_expiry, datetime.datetime) else str(backup_expiry)
+
+                # Size
+                backup_size_bytes = backup_summary.get('BackupSizeBytes', 0)
+                backup_size_mb = round(backup_size_bytes / (1024 * 1024), 2)
+
+                regional_backups.append({
+                    'Region': region,
+                    'Backup Name': backup_name,
+                    'Table Name': table_name,
+                    'Backup Status': backup_status,
+                    'Backup Type': backup_type,
+                    'Backup Size (MB)': backup_size_mb,
+                    'Created Date': backup_creation if backup_creation else 'N/A',
+                    'Expiry Date': backup_expiry if backup_expiry else 'Never',
+                    'Backup ARN': backup_arn
+                })
+
+        utils.log_info(f"Found {len(regional_backups)} DynamoDB backups in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting DynamoDB backups in region {region}", e)
+
+    return regional_backups
+
+
 @utils.aws_error_handler("Collecting DynamoDB backups", default_return=[])
 def collect_dynamodb_backups(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect DynamoDB backup information from AWS regions.
+    Collect DynamoDB backup information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -343,60 +443,14 @@ def collect_dynamodb_backups(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with backup information
     """
     print("\n=== COLLECTING DYNAMODB BACKUPS ===")
-    all_backups = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            dynamodb_client = utils.get_boto3_client('dynamodb', region_name=region)
-
-            # List backups
-            paginator = dynamodb_client.get_paginator('list_backups')
-            for page in paginator.paginate():
-                backup_summaries = page.get('BackupSummaries', [])
-
-                for backup_summary in backup_summaries:
-                    backup_name = backup_summary.get('BackupName', 'N/A')
-                    table_name = backup_summary.get('TableName', 'N/A')
-
-                    print(f"  Processing backup: {backup_name}")
-
-                    # Backup details
-                    backup_arn = backup_summary.get('BackupArn', 'N/A')
-                    backup_status = backup_summary.get('BackupStatus', 'UNKNOWN')
-                    backup_type = backup_summary.get('BackupType', 'N/A')
-
-                    # Dates
-                    backup_creation = backup_summary.get('BackupCreationDateTime', '')
-                    if backup_creation:
-                        backup_creation = backup_creation.strftime('%Y-%m-%d %H:%M:%S') if isinstance(backup_creation, datetime.datetime) else str(backup_creation)
-
-                    backup_expiry = backup_summary.get('BackupExpiryDateTime', '')
-                    if backup_expiry:
-                        backup_expiry = backup_expiry.strftime('%Y-%m-%d %H:%M:%S') if isinstance(backup_expiry, datetime.datetime) else str(backup_expiry)
-
-                    # Size
-                    backup_size_bytes = backup_summary.get('BackupSizeBytes', 0)
-                    backup_size_mb = round(backup_size_bytes / (1024 * 1024), 2)
-
-                    all_backups.append({
-                        'Region': region,
-                        'Backup Name': backup_name,
-                        'Table Name': table_name,
-                        'Backup Status': backup_status,
-                        'Backup Type': backup_type,
-                        'Backup Size (MB)': backup_size_mb,
-                        'Created Date': backup_creation if backup_creation else 'N/A',
-                        'Expiry Date': backup_expiry if backup_expiry else 'Never',
-                        'Backup ARN': backup_arn
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting DynamoDB backups in region {region}", e)
+    # Use concurrent scanning
+    all_backups = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_dynamodb_backups_in_region,
+        resource_type="DynamoDB backups"
+    )
 
     utils.log_success(f"Total DynamoDB backups collected: {len(all_backups)}")
     return all_backups

@@ -93,10 +93,91 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def scan_ecr_repositories_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan ECR repositories in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with ECR repository information from this region
+    """
+    regional_repos = []
+
+    try:
+        ecr_client = utils.get_boto3_client('ecr', region_name=region)
+
+        # Get ECR repositories
+        paginator = ecr_client.get_paginator('describe_repositories')
+        repo_count = 0
+
+        for page in paginator.paginate():
+            repositories = page.get('repositories', [])
+            repo_count += len(repositories)
+
+            for repo in repositories:
+                repository_name = repo.get('repositoryName', '')
+                print(f"  Processing repository: {repository_name}")
+
+                # Basic information
+                repository_arn = repo.get('repositoryArn', '')
+                repository_uri = repo.get('repositoryUri', '')
+                registry_id = repo.get('registryId', '')
+
+                # Creation date
+                created_at = repo.get('createdAt', '')
+                if created_at:
+                    created_at = created_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_at, datetime.datetime) else str(created_at)
+
+                # Image tag mutability
+                image_tag_mutability = repo.get('imageTagMutability', 'MUTABLE')
+
+                # Image scanning configuration
+                image_scanning_config = repo.get('imageScanningConfiguration', {})
+                scan_on_push = image_scanning_config.get('scanOnPush', False)
+
+                # Encryption configuration
+                encryption_config = repo.get('encryptionConfiguration', {})
+                encryption_type = encryption_config.get('encryptionType', 'AES256')
+                kms_key = encryption_config.get('kmsKey', 'N/A')
+
+                # Get image count
+                try:
+                    images_response = ecr_client.describe_images(
+                        repositoryName=repository_name,
+                        maxResults=1000
+                    )
+                    image_count = len(images_response.get('imageDetails', []))
+                except Exception:
+                    image_count = 'Unknown'
+
+                regional_repos.append({
+                    'Region': region,
+                    'Repository Name': repository_name,
+                    'Repository URI': repository_uri,
+                    'Registry ID': registry_id,
+                    'Image Count': image_count,
+                    'Image Tag Mutability': image_tag_mutability,
+                    'Scan on Push': scan_on_push,
+                    'Encryption Type': encryption_type,
+                    'KMS Key': kms_key,
+                    'Created At': created_at,
+                    'Repository ARN': repository_arn
+                })
+
+        utils.log_info(f"Found {repo_count} ECR repositories in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error processing region {region} for ECR repositories", e)
+
+    return regional_repos
+
+
 @utils.aws_error_handler("Collecting ECR repositories", default_return=[])
 def collect_ecr_repositories(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect ECR repository information from AWS regions.
+    Collect ECR repository information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -105,89 +186,111 @@ def collect_ecr_repositories(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with ECR repository information
     """
     print("\n=== COLLECTING ECR REPOSITORIES ===")
-    all_repos = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            ecr_client = utils.get_boto3_client('ecr', region_name=region)
-
-            # Get ECR repositories
-            paginator = ecr_client.get_paginator('describe_repositories')
-            repo_count = 0
-
-            for page in paginator.paginate():
-                repositories = page.get('repositories', [])
-                repo_count += len(repositories)
-
-                for repo in repositories:
-                    repository_name = repo.get('repositoryName', '')
-                    print(f"  Processing repository: {repository_name}")
-
-                    # Basic information
-                    repository_arn = repo.get('repositoryArn', '')
-                    repository_uri = repo.get('repositoryUri', '')
-                    registry_id = repo.get('registryId', '')
-
-                    # Creation date
-                    created_at = repo.get('createdAt', '')
-                    if created_at:
-                        created_at = created_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_at, datetime.datetime) else str(created_at)
-
-                    # Image tag mutability
-                    image_tag_mutability = repo.get('imageTagMutability', 'MUTABLE')
-
-                    # Image scanning configuration
-                    image_scanning_config = repo.get('imageScanningConfiguration', {})
-                    scan_on_push = image_scanning_config.get('scanOnPush', False)
-
-                    # Encryption configuration
-                    encryption_config = repo.get('encryptionConfiguration', {})
-                    encryption_type = encryption_config.get('encryptionType', 'AES256')
-                    kms_key = encryption_config.get('kmsKey', 'N/A')
-
-                    # Get image count
-                    try:
-                        images_response = ecr_client.describe_images(
-                            repositoryName=repository_name,
-                            maxResults=1000
-                        )
-                        image_count = len(images_response.get('imageDetails', []))
-                    except Exception:
-                        image_count = 'Unknown'
-
-                    all_repos.append({
-                        'Region': region,
-                        'Repository Name': repository_name,
-                        'Repository URI': repository_uri,
-                        'Registry ID': registry_id,
-                        'Image Count': image_count,
-                        'Image Tag Mutability': image_tag_mutability,
-                        'Scan on Push': scan_on_push,
-                        'Encryption Type': encryption_type,
-                        'KMS Key': kms_key,
-                        'Created At': created_at,
-                        'Repository ARN': repository_arn
-                    })
-
-            print(f"  Found {repo_count} ECR repositories")
-
-        except Exception as e:
-            utils.log_error(f"Error processing region {region} for ECR repositories", e)
+    # Use concurrent scanning
+    all_repos = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_ecr_repositories_in_region,
+        resource_type="ECR repositories"
+    )
 
     utils.log_success(f"Total ECR repositories collected: {len(all_repos)}")
     return all_repos
 
 
+def scan_ecr_images_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan ECR images in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with ECR image information from this region
+    """
+    regional_images = []
+
+    try:
+        ecr_client = utils.get_boto3_client('ecr', region_name=region)
+
+        # Get all repositories first
+        repo_paginator = ecr_client.get_paginator('describe_repositories')
+
+        for repo_page in repo_paginator.paginate():
+            repositories = repo_page.get('repositories', [])
+
+            for repo in repositories:
+                repository_name = repo.get('repositoryName', '')
+
+                try:
+                    # Get images for this repository
+                    image_paginator = ecr_client.get_paginator('describe_images')
+
+                    for image_page in image_paginator.paginate(repositoryName=repository_name):
+                        images = image_page.get('imageDetails', [])
+
+                        for image in images:
+                            image_digest = image.get('imageDigest', '')
+
+                            # Get image tags
+                            image_tags = image.get('imageTags', [])
+                            tags_str = ', '.join(image_tags) if image_tags else 'Untagged'
+
+                            # Image size
+                            image_size_bytes = image.get('imageSizeInBytes', 0)
+                            image_size_mb = round(image_size_bytes / (1024 * 1024), 2) if image_size_bytes else 0
+
+                            # Pushed at
+                            pushed_at = image.get('imagePushedAt', '')
+                            if pushed_at:
+                                pushed_at = pushed_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(pushed_at, datetime.datetime) else str(pushed_at)
+
+                            # Scan findings
+                            scan_status = image.get('imageScanStatus', {}).get('status', 'N/A')
+                            scan_findings_summary = image.get('imageScanFindingsSummary', {})
+
+                            if scan_findings_summary:
+                                finding_severity_counts = scan_findings_summary.get('findingSeverityCounts', {})
+                                critical = finding_severity_counts.get('CRITICAL', 0)
+                                high = finding_severity_counts.get('HIGH', 0)
+                                medium = finding_severity_counts.get('MEDIUM', 0)
+                                low = finding_severity_counts.get('LOW', 0)
+
+                                vulnerabilities = f"Critical: {critical}, High: {high}, Medium: {medium}, Low: {low}"
+                            else:
+                                vulnerabilities = 'N/A'
+
+                            # Artifact media type
+                            artifact_media_type = image.get('artifactMediaType', 'N/A')
+
+                            regional_images.append({
+                                'Region': region,
+                                'Repository Name': repository_name,
+                                'Image Tags': tags_str,
+                                'Image Digest': image_digest[:16] + '...',  # Truncate for readability
+                                'Size (MB)': image_size_mb,
+                                'Pushed At': pushed_at,
+                                'Scan Status': scan_status,
+                                'Vulnerabilities': vulnerabilities,
+                                'Artifact Media Type': artifact_media_type
+                            })
+
+                except Exception as e:
+                    utils.log_warning(f"Could not get images for repository {repository_name}: {e}")
+
+        utils.log_info(f"Found {len(regional_images)} ECR images in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting ECR images in region {region}", e)
+
+    return regional_images
+
+
 @utils.aws_error_handler("Collecting ECR images", default_return=[])
 def collect_ecr_images(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect ECR image information from AWS regions.
+    Collect ECR image information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -196,93 +299,96 @@ def collect_ecr_images(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with ECR image information
     """
     print("\n=== COLLECTING ECR IMAGES ===")
-    all_images = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            ecr_client = utils.get_boto3_client('ecr', region_name=region)
-
-            # Get all repositories first
-            repo_paginator = ecr_client.get_paginator('describe_repositories')
-
-            for repo_page in repo_paginator.paginate():
-                repositories = repo_page.get('repositories', [])
-
-                for repo in repositories:
-                    repository_name = repo.get('repositoryName', '')
-
-                    try:
-                        # Get images for this repository
-                        image_paginator = ecr_client.get_paginator('describe_images')
-
-                        for image_page in image_paginator.paginate(repositoryName=repository_name):
-                            images = image_page.get('imageDetails', [])
-
-                            for image in images:
-                                image_digest = image.get('imageDigest', '')
-
-                                # Get image tags
-                                image_tags = image.get('imageTags', [])
-                                tags_str = ', '.join(image_tags) if image_tags else 'Untagged'
-
-                                # Image size
-                                image_size_bytes = image.get('imageSizeInBytes', 0)
-                                image_size_mb = round(image_size_bytes / (1024 * 1024), 2) if image_size_bytes else 0
-
-                                # Pushed at
-                                pushed_at = image.get('imagePushedAt', '')
-                                if pushed_at:
-                                    pushed_at = pushed_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(pushed_at, datetime.datetime) else str(pushed_at)
-
-                                # Scan findings
-                                scan_status = image.get('imageScanStatus', {}).get('status', 'N/A')
-                                scan_findings_summary = image.get('imageScanFindingsSummary', {})
-
-                                if scan_findings_summary:
-                                    finding_severity_counts = scan_findings_summary.get('findingSeverityCounts', {})
-                                    critical = finding_severity_counts.get('CRITICAL', 0)
-                                    high = finding_severity_counts.get('HIGH', 0)
-                                    medium = finding_severity_counts.get('MEDIUM', 0)
-                                    low = finding_severity_counts.get('LOW', 0)
-
-                                    vulnerabilities = f"Critical: {critical}, High: {high}, Medium: {medium}, Low: {low}"
-                                else:
-                                    vulnerabilities = 'N/A'
-
-                                # Artifact media type
-                                artifact_media_type = image.get('artifactMediaType', 'N/A')
-
-                                all_images.append({
-                                    'Region': region,
-                                    'Repository Name': repository_name,
-                                    'Image Tags': tags_str,
-                                    'Image Digest': image_digest[:16] + '...',  # Truncate for readability
-                                    'Size (MB)': image_size_mb,
-                                    'Pushed At': pushed_at,
-                                    'Scan Status': scan_status,
-                                    'Vulnerabilities': vulnerabilities,
-                                    'Artifact Media Type': artifact_media_type
-                                })
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get images for repository {repository_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting ECR images in region {region}", e)
+    # Use concurrent scanning
+    all_images = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_ecr_images_in_region,
+        resource_type="ECR images"
+    )
 
     utils.log_success(f"Total ECR images collected: {len(all_images)}")
     return all_images
 
 
+def scan_lifecycle_policies_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan ECR lifecycle policies in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with lifecycle policy information from this region
+    """
+    regional_policies = []
+
+    try:
+        ecr_client = utils.get_boto3_client('ecr', region_name=region)
+
+        # Get all repositories
+        repo_paginator = ecr_client.get_paginator('describe_repositories')
+
+        for repo_page in repo_paginator.paginate():
+            repositories = repo_page.get('repositories', [])
+
+            for repo in repositories:
+                repository_name = repo.get('repositoryName', '')
+
+                try:
+                    # Get lifecycle policy for this repository
+                    policy_response = ecr_client.get_lifecycle_policy(
+                        repositoryName=repository_name
+                    )
+
+                    policy_text = policy_response.get('lifecyclePolicyText', '')
+                    last_evaluated = policy_response.get('lastEvaluatedAt', '')
+
+                    if last_evaluated:
+                        last_evaluated = last_evaluated.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_evaluated, datetime.datetime) else str(last_evaluated)
+
+                    # Parse policy to count rules (JSON)
+                    import json
+                    try:
+                        policy_json = json.loads(policy_text)
+                        rules = policy_json.get('rules', [])
+                        rule_count = len(rules)
+                    except:
+                        rule_count = 'Unknown'
+
+                    regional_policies.append({
+                        'Region': region,
+                        'Repository Name': repository_name,
+                        'Rule Count': rule_count,
+                        'Last Evaluated': last_evaluated if last_evaluated else 'Never',
+                        'Has Policy': True
+                    })
+
+                except ecr_client.exceptions.LifecyclePolicyNotFoundException:
+                    # No lifecycle policy for this repository
+                    regional_policies.append({
+                        'Region': region,
+                        'Repository Name': repository_name,
+                        'Rule Count': 0,
+                        'Last Evaluated': 'N/A',
+                        'Has Policy': False
+                    })
+                except Exception as e:
+                    utils.log_warning(f"Could not get lifecycle policy for {repository_name}: {e}")
+
+        utils.log_info(f"Found {len(regional_policies)} lifecycle policy records in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting lifecycle policies in region {region}", e)
+
+    return regional_policies
+
+
 @utils.aws_error_handler("Collecting lifecycle policies", default_return=[])
 def collect_lifecycle_policies(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect ECR lifecycle policy information from AWS regions.
+    Collect ECR lifecycle policy information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -291,69 +397,14 @@ def collect_lifecycle_policies(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with lifecycle policy information
     """
     print("\n=== COLLECTING LIFECYCLE POLICIES ===")
-    all_policies = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            ecr_client = utils.get_boto3_client('ecr', region_name=region)
-
-            # Get all repositories
-            repo_paginator = ecr_client.get_paginator('describe_repositories')
-
-            for repo_page in repo_paginator.paginate():
-                repositories = repo_page.get('repositories', [])
-
-                for repo in repositories:
-                    repository_name = repo.get('repositoryName', '')
-
-                    try:
-                        # Get lifecycle policy for this repository
-                        policy_response = ecr_client.get_lifecycle_policy(
-                            repositoryName=repository_name
-                        )
-
-                        policy_text = policy_response.get('lifecyclePolicyText', '')
-                        last_evaluated = policy_response.get('lastEvaluatedAt', '')
-
-                        if last_evaluated:
-                            last_evaluated = last_evaluated.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_evaluated, datetime.datetime) else str(last_evaluated)
-
-                        # Parse policy to count rules (JSON)
-                        import json
-                        try:
-                            policy_json = json.loads(policy_text)
-                            rules = policy_json.get('rules', [])
-                            rule_count = len(rules)
-                        except:
-                            rule_count = 'Unknown'
-
-                        all_policies.append({
-                            'Region': region,
-                            'Repository Name': repository_name,
-                            'Rule Count': rule_count,
-                            'Last Evaluated': last_evaluated if last_evaluated else 'Never',
-                            'Has Policy': True
-                        })
-
-                    except ecr_client.exceptions.LifecyclePolicyNotFoundException:
-                        # No lifecycle policy for this repository
-                        all_policies.append({
-                            'Region': region,
-                            'Repository Name': repository_name,
-                            'Rule Count': 0,
-                            'Last Evaluated': 'N/A',
-                            'Has Policy': False
-                        })
-                    except Exception as e:
-                        utils.log_warning(f"Could not get lifecycle policy for {repository_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting lifecycle policies in region {region}", e)
+    # Use concurrent scanning
+    all_policies = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_lifecycle_policies_in_region,
+        resource_type="ECR lifecycle policies"
+    )
 
     utils.log_success(f"Total lifecycle policy records collected: {len(all_policies)}")
     return all_policies

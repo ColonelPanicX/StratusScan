@@ -40,13 +40,11 @@ except ImportError:
     sys.exit(1)
 
 
-@utils.aws_error_handler("Collecting OpenSearch domains", default_return=[])
-def collect_opensearch_domains(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect OpenSearch Service domain information from AWS regions."""
-    all_domains = []
+def scan_opensearch_domains_in_region(region: str) -> List[Dict[str, Any]]:
+    """Scan OpenSearch domains in a single AWS region."""
+    region_domains = []
 
-    for region in regions:
-        utils.log_info(f"Scanning OpenSearch domains in {region}...")
+    try:
         opensearch_client = utils.get_boto3_client('opensearch', region_name=region)
 
         # List all domain names
@@ -55,11 +53,11 @@ def collect_opensearch_domains(regions: List[str]) -> List[Dict[str, Any]]:
             domain_names = [domain['DomainName'] for domain in response.get('DomainNames', [])]
         except Exception as e:
             utils.log_warning(f"Could not list domains in {region}: {str(e)}")
-            continue
+            return region_domains
 
         if not domain_names:
             utils.log_info(f"No OpenSearch domains found in {region}")
-            continue
+            return region_domains
 
         # Describe each domain
         for domain_name in domain_names:
@@ -171,7 +169,7 @@ def collect_opensearch_domains(regions: List[str]) -> List[Dict[str, Any]]:
                 else:
                     created_time_str = 'Unknown'
 
-                all_domains.append({
+                region_domains.append({
                     'Region': region,
                     'Domain Name': domain_name,
                     'Domain ID': domain_id,
@@ -215,18 +213,32 @@ def collect_opensearch_domains(regions: List[str]) -> List[Dict[str, Any]]:
                 utils.log_error(f"Error describing domain {domain_name} in {region}: {str(e)}")
                 continue
 
-        utils.log_success(f"Collected {len([d for d in all_domains if d['Region'] == region])} OpenSearch domains from {region}")
+    except Exception as e:
+        utils.log_error(f"Error scanning OpenSearch domains in {region}", e)
+
+    utils.log_info(f"Found {len(region_domains)} OpenSearch domains in {region}")
+    return region_domains
+
+
+@utils.aws_error_handler("Collecting OpenSearch domains", default_return=[])
+def collect_opensearch_domains(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect OpenSearch Service domain information from AWS regions."""
+    utils.log_info("Using concurrent region scanning for improved performance")
+
+    all_domains = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_opensearch_domains_in_region,
+        resource_type="OpenSearch domains"
+    )
 
     return all_domains
 
 
-@utils.aws_error_handler("Collecting OpenSearch domain tags", default_return=[])
-def collect_opensearch_tags(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect OpenSearch Service domain tags from AWS regions."""
-    all_tags = []
+def scan_opensearch_tags_in_region(region: str) -> List[Dict[str, Any]]:
+    """Scan OpenSearch domain tags in a single AWS region."""
+    region_tags = []
 
-    for region in regions:
-        utils.log_info(f"Scanning OpenSearch domain tags in {region}...")
+    try:
         opensearch_client = utils.get_boto3_client('opensearch', region_name=region)
 
         # List all domain names
@@ -235,10 +247,10 @@ def collect_opensearch_tags(regions: List[str]) -> List[Dict[str, Any]]:
             domain_names = [domain['DomainName'] for domain in response.get('DomainNames', [])]
         except Exception as e:
             utils.log_warning(f"Could not list domains in {region}: {str(e)}")
-            continue
+            return region_tags
 
         if not domain_names:
-            continue
+            return region_tags
 
         # Get tags for each domain
         for domain_name in domain_names:
@@ -258,7 +270,7 @@ def collect_opensearch_tags(regions: List[str]) -> List[Dict[str, Any]]:
                     tag_key = tag.get('Key', 'N/A')
                     tag_value = tag.get('Value', 'N/A')
 
-                    all_tags.append({
+                    region_tags.append({
                         'Region': region,
                         'Domain Name': domain_name,
                         'Tag Key': tag_key,
@@ -269,7 +281,23 @@ def collect_opensearch_tags(regions: List[str]) -> List[Dict[str, Any]]:
                 utils.log_warning(f"Could not retrieve tags for domain {domain_name}: {str(e)}")
                 continue
 
-        utils.log_success(f"Collected tags for OpenSearch domains in {region}")
+    except Exception as e:
+        utils.log_error(f"Error scanning OpenSearch domain tags in {region}", e)
+
+    utils.log_info(f"Found {len(region_tags)} OpenSearch domain tags in {region}")
+    return region_tags
+
+
+@utils.aws_error_handler("Collecting OpenSearch domain tags", default_return=[])
+def collect_opensearch_tags(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect OpenSearch Service domain tags from AWS regions."""
+    utils.log_info("Using concurrent region scanning for improved performance")
+
+    all_tags = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_opensearch_tags_in_region,
+        resource_type="OpenSearch domain tags"
+    )
 
     return all_tags
 

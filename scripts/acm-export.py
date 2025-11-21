@@ -93,10 +93,161 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def scan_acm_certificates_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan ACM certificates in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with certificate information from this region
+    """
+    regional_certificates = []
+
+    try:
+        acm_client = utils.get_boto3_client('acm', region_name=region)
+
+        # Get certificates
+        paginator = acm_client.get_paginator('list_certificates')
+
+        for page in paginator.paginate():
+            certificates = page.get('CertificateSummaryList', [])
+
+            for cert_summary in certificates:
+                cert_arn = cert_summary.get('CertificateArn', '')
+                domain_name = cert_summary.get('DomainName', '')
+
+                try:
+                    # Get detailed certificate information
+                    cert_response = acm_client.describe_certificate(CertificateArn=cert_arn)
+                    cert = cert_response.get('Certificate', {})
+
+                    # Status
+                    status = cert.get('Status', '')
+
+                    # Type
+                    cert_type = cert.get('Type', '')
+
+                    # Key algorithm
+                    key_algorithm = cert.get('KeyAlgorithm', 'N/A')
+
+                    # Signature algorithm
+                    signature_algorithm = cert.get('SignatureAlgorithm', 'N/A')
+
+                    # Subject Alternative Names
+                    subject_alternative_names = cert.get('SubjectAlternativeNames', [])
+                    san_count = len(subject_alternative_names)
+                    san_str = ', '.join(subject_alternative_names[:5])  # First 5 SANs
+                    if san_count > 5:
+                        san_str += f" ... ({san_count - 5} more)"
+
+                    # Validation method
+                    domain_validation_options = cert.get('DomainValidationOptions', [])
+                    validation_method = 'N/A'
+                    if domain_validation_options:
+                        validation_method = domain_validation_options[0].get('ValidationMethod', 'N/A')
+
+                    # Validation status
+                    validation_status = 'N/A'
+                    if domain_validation_options:
+                        validation_status = domain_validation_options[0].get('ValidationStatus', 'N/A')
+
+                    # In use by (resources using this certificate)
+                    in_use_by = cert.get('InUseBy', [])
+                    in_use_count = len(in_use_by)
+                    in_use_str = ', '.join([arn.split('/')[-1] for arn in in_use_by[:3]])  # First 3 resources
+                    if in_use_count > 3:
+                        in_use_str += f" ... ({in_use_count - 3} more)"
+                    if not in_use_str:
+                        in_use_str = 'Not in use'
+
+                    # Created date
+                    created_at = cert.get('CreatedAt', '')
+                    if created_at:
+                        created_at = created_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_at, datetime.datetime) else str(created_at)
+
+                    # Issued date
+                    issued_at = cert.get('IssuedAt', '')
+                    if issued_at:
+                        issued_at = issued_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(issued_at, datetime.datetime) else str(issued_at)
+
+                    # Not before
+                    not_before = cert.get('NotBefore', '')
+                    if not_before:
+                        not_before = not_before.strftime('%Y-%m-%d %H:%M:%S') if isinstance(not_before, datetime.datetime) else str(not_before)
+
+                    # Not after (expiration)
+                    not_after = cert.get('NotAfter', '')
+                    days_to_expiry = 'N/A'
+                    if not_after:
+                        not_after_dt = not_after if isinstance(not_after, datetime.datetime) else datetime.datetime.fromisoformat(str(not_after))
+                        not_after = not_after_dt.strftime('%Y-%m-%d %H:%M:%S')
+                        # Calculate days to expiry
+                        days_to_expiry = (not_after_dt.replace(tzinfo=None) - datetime.datetime.now()).days
+
+                    # Renewal eligibility
+                    renewal_eligibility = cert.get('RenewalEligibility', 'N/A')
+
+                    # Renewal summary
+                    renewal_summary = cert.get('RenewalSummary', {})
+                    renewal_status = renewal_summary.get('RenewalStatus', 'N/A')
+
+                    # Certificate transparency logging
+                    options = cert.get('Options', {})
+                    certificate_transparency_logging = options.get('CertificateTransparencyLoggingPreference', 'N/A')
+
+                    # Issuer
+                    issuer = cert.get('Issuer', 'N/A')
+
+                    # Subject
+                    subject = cert.get('Subject', 'N/A')
+
+                    # Serial
+                    serial = cert.get('Serial', 'N/A')
+
+                    regional_certificates.append({
+                        'Region': region,
+                        'Domain Name': domain_name,
+                        'Status': status,
+                        'Type': cert_type,
+                        'Validation Method': validation_method,
+                        'Validation Status': validation_status,
+                        'SAN Count': san_count,
+                        'Subject Alternative Names': san_str,
+                        'In Use By Count': in_use_count,
+                        'In Use By': in_use_str,
+                        'Days to Expiry': days_to_expiry,
+                        'Expiration Date': not_after if not_after else 'N/A',
+                        'Renewal Eligibility': renewal_eligibility,
+                        'Renewal Status': renewal_status,
+                        'Key Algorithm': key_algorithm,
+                        'Signature Algorithm': signature_algorithm,
+                        'Certificate Transparency': certificate_transparency_logging,
+                        'Issuer': issuer,
+                        'Subject': subject,
+                        'Serial': serial,
+                        'Created Date': created_at,
+                        'Issued Date': issued_at if issued_at else 'N/A',
+                        'Not Before': not_before if not_before else 'N/A',
+                        'Certificate ARN': cert_arn
+                    })
+
+                except Exception as e:
+                    utils.log_warning(f"Could not get details for certificate {cert_arn}: {e}")
+
+        utils.log_info(f"Found {len(regional_certificates)} ACM certificates in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error processing region {region} for ACM certificates", e)
+
+    return regional_certificates
+
+
 @utils.aws_error_handler("Collecting ACM certificates", default_return=[])
 def collect_acm_certificates(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect ACM certificate information from AWS regions.
+    Collect ACM certificate information from AWS regions using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -105,162 +256,94 @@ def collect_acm_certificates(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with certificate information
     """
     print("\n=== COLLECTING ACM CERTIFICATES ===")
-    all_certificates = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            acm_client = utils.get_boto3_client('acm', region_name=region)
-
-            # Get certificates
-            paginator = acm_client.get_paginator('list_certificates')
-            cert_count = 0
-
-            for page in paginator.paginate():
-                certificates = page.get('CertificateSummaryList', [])
-                cert_count += len(certificates)
-
-                for cert_summary in certificates:
-                    cert_arn = cert_summary.get('CertificateArn', '')
-                    domain_name = cert_summary.get('DomainName', '')
-                    print(f"  Processing certificate: {domain_name}")
-
-                    try:
-                        # Get detailed certificate information
-                        cert_response = acm_client.describe_certificate(CertificateArn=cert_arn)
-                        cert = cert_response.get('Certificate', {})
-
-                        # Status
-                        status = cert.get('Status', '')
-
-                        # Type
-                        cert_type = cert.get('Type', '')
-
-                        # Key algorithm
-                        key_algorithm = cert.get('KeyAlgorithm', 'N/A')
-
-                        # Signature algorithm
-                        signature_algorithm = cert.get('SignatureAlgorithm', 'N/A')
-
-                        # Subject Alternative Names
-                        subject_alternative_names = cert.get('SubjectAlternativeNames', [])
-                        san_count = len(subject_alternative_names)
-                        san_str = ', '.join(subject_alternative_names[:5])  # First 5 SANs
-                        if san_count > 5:
-                            san_str += f" ... ({san_count - 5} more)"
-
-                        # Validation method
-                        domain_validation_options = cert.get('DomainValidationOptions', [])
-                        validation_method = 'N/A'
-                        if domain_validation_options:
-                            validation_method = domain_validation_options[0].get('ValidationMethod', 'N/A')
-
-                        # Validation status
-                        validation_status = 'N/A'
-                        if domain_validation_options:
-                            validation_status = domain_validation_options[0].get('ValidationStatus', 'N/A')
-
-                        # In use by (resources using this certificate)
-                        in_use_by = cert.get('InUseBy', [])
-                        in_use_count = len(in_use_by)
-                        in_use_str = ', '.join([arn.split('/')[-1] for arn in in_use_by[:3]])  # First 3 resources
-                        if in_use_count > 3:
-                            in_use_str += f" ... ({in_use_count - 3} more)"
-                        if not in_use_str:
-                            in_use_str = 'Not in use'
-
-                        # Created date
-                        created_at = cert.get('CreatedAt', '')
-                        if created_at:
-                            created_at = created_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(created_at, datetime.datetime) else str(created_at)
-
-                        # Issued date
-                        issued_at = cert.get('IssuedAt', '')
-                        if issued_at:
-                            issued_at = issued_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(issued_at, datetime.datetime) else str(issued_at)
-
-                        # Not before
-                        not_before = cert.get('NotBefore', '')
-                        if not_before:
-                            not_before = not_before.strftime('%Y-%m-%d %H:%M:%S') if isinstance(not_before, datetime.datetime) else str(not_before)
-
-                        # Not after (expiration)
-                        not_after = cert.get('NotAfter', '')
-                        days_to_expiry = 'N/A'
-                        if not_after:
-                            not_after_dt = not_after if isinstance(not_after, datetime.datetime) else datetime.datetime.fromisoformat(str(not_after))
-                            not_after = not_after_dt.strftime('%Y-%m-%d %H:%M:%S')
-                            # Calculate days to expiry
-                            days_to_expiry = (not_after_dt.replace(tzinfo=None) - datetime.datetime.now()).days
-
-                        # Renewal eligibility
-                        renewal_eligibility = cert.get('RenewalEligibility', 'N/A')
-
-                        # Renewal summary
-                        renewal_summary = cert.get('RenewalSummary', {})
-                        renewal_status = renewal_summary.get('RenewalStatus', 'N/A')
-
-                        # Certificate transparency logging
-                        options = cert.get('Options', {})
-                        certificate_transparency_logging = options.get('CertificateTransparencyLoggingPreference', 'N/A')
-
-                        # Issuer
-                        issuer = cert.get('Issuer', 'N/A')
-
-                        # Subject
-                        subject = cert.get('Subject', 'N/A')
-
-                        # Serial
-                        serial = cert.get('Serial', 'N/A')
-
-                        all_certificates.append({
-                            'Region': region,
-                            'Domain Name': domain_name,
-                            'Status': status,
-                            'Type': cert_type,
-                            'Validation Method': validation_method,
-                            'Validation Status': validation_status,
-                            'SAN Count': san_count,
-                            'Subject Alternative Names': san_str,
-                            'In Use By Count': in_use_count,
-                            'In Use By': in_use_str,
-                            'Days to Expiry': days_to_expiry,
-                            'Expiration Date': not_after if not_after else 'N/A',
-                            'Renewal Eligibility': renewal_eligibility,
-                            'Renewal Status': renewal_status,
-                            'Key Algorithm': key_algorithm,
-                            'Signature Algorithm': signature_algorithm,
-                            'Certificate Transparency': certificate_transparency_logging,
-                            'Issuer': issuer,
-                            'Subject': subject,
-                            'Serial': serial,
-                            'Created Date': created_at,
-                            'Issued Date': issued_at if issued_at else 'N/A',
-                            'Not Before': not_before if not_before else 'N/A',
-                            'Certificate ARN': cert_arn
-                        })
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get details for certificate {cert_arn}: {e}")
-
-            print(f"  Found {cert_count} certificates")
-
-        except Exception as e:
-            utils.log_error(f"Error processing region {region} for ACM certificates", e)
+    # Use concurrent scanning
+    all_certificates = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_acm_certificates_in_region,
+        resource_type="ACM certificates"
+    )
 
     utils.log_success(f"Total ACM certificates collected: {len(all_certificates)}")
     return all_certificates
 
 
+def scan_certificate_validation_details_in_region(region: str) -> List[Dict[str, Any]]:
+    """
+    Scan certificate validation details in a single region.
+
+    Args:
+        region: AWS region to scan
+
+    Returns:
+        list: List of dictionaries with validation details from this region
+    """
+    regional_validations = []
+
+    try:
+        acm_client = utils.get_boto3_client('acm', region_name=region)
+
+        # Get all certificates first
+        cert_paginator = acm_client.get_paginator('list_certificates')
+
+        for cert_page in cert_paginator.paginate():
+            certificates = cert_page.get('CertificateSummaryList', [])
+
+            for cert_summary in certificates:
+                cert_arn = cert_summary.get('CertificateArn', '')
+                domain_name = cert_summary.get('DomainName', '')
+
+                try:
+                    # Get certificate details
+                    cert_response = acm_client.describe_certificate(CertificateArn=cert_arn)
+                    cert = cert_response.get('Certificate', {})
+
+                    # Domain validation options
+                    domain_validation_options = cert.get('DomainValidationOptions', [])
+
+                    for validation_option in domain_validation_options:
+                        validation_domain = validation_option.get('DomainName', '')
+                        validation_method = validation_option.get('ValidationMethod', '')
+                        validation_status = validation_option.get('ValidationStatus', '')
+
+                        # Resource record (for DNS validation)
+                        resource_record = validation_option.get('ResourceRecord', {})
+                        record_name = resource_record.get('Name', 'N/A')
+                        record_type = resource_record.get('Type', 'N/A')
+                        record_value = resource_record.get('Value', 'N/A')
+
+                        # Validation emails (for email validation)
+                        validation_emails = validation_option.get('ValidationEmails', [])
+                        validation_emails_str = ', '.join(validation_emails) if validation_emails else 'N/A'
+
+                        regional_validations.append({
+                            'Region': region,
+                            'Certificate Domain': domain_name,
+                            'Validation Domain': validation_domain,
+                            'Validation Method': validation_method,
+                            'Validation Status': validation_status,
+                            'DNS Record Name': record_name,
+                            'DNS Record Type': record_type,
+                            'DNS Record Value': record_value,
+                            'Validation Emails': validation_emails_str
+                        })
+
+                except Exception as e:
+                    utils.log_warning(f"Could not get validation details for {cert_arn}: {e}")
+
+        utils.log_info(f"Found {len(regional_validations)} certificate validation details in {region}")
+
+    except Exception as e:
+        utils.log_error(f"Error collecting validation details in region {region}", e)
+
+    return regional_validations
+
+
 @utils.aws_error_handler("Collecting certificate validation details", default_return=[])
 def collect_certificate_validation_details(regions: List[str]) -> List[Dict[str, Any]]:
     """
-    Collect detailed validation information for ACM certificates.
+    Collect detailed validation information for ACM certificates using concurrent scanning.
 
     Args:
         regions: List of AWS regions to scan
@@ -269,67 +352,14 @@ def collect_certificate_validation_details(regions: List[str]) -> List[Dict[str,
         list: List of dictionaries with validation details
     """
     print("\n=== COLLECTING CERTIFICATE VALIDATION DETAILS ===")
-    all_validations = []
+    utils.log_info("Using concurrent region scanning for improved performance")
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            acm_client = utils.get_boto3_client('acm', region_name=region)
-
-            # Get all certificates first
-            cert_paginator = acm_client.get_paginator('list_certificates')
-
-            for cert_page in cert_paginator.paginate():
-                certificates = cert_page.get('CertificateSummaryList', [])
-
-                for cert_summary in certificates:
-                    cert_arn = cert_summary.get('CertificateArn', '')
-                    domain_name = cert_summary.get('DomainName', '')
-
-                    try:
-                        # Get certificate details
-                        cert_response = acm_client.describe_certificate(CertificateArn=cert_arn)
-                        cert = cert_response.get('Certificate', {})
-
-                        # Domain validation options
-                        domain_validation_options = cert.get('DomainValidationOptions', [])
-
-                        for validation_option in domain_validation_options:
-                            validation_domain = validation_option.get('DomainName', '')
-                            validation_method = validation_option.get('ValidationMethod', '')
-                            validation_status = validation_option.get('ValidationStatus', '')
-
-                            # Resource record (for DNS validation)
-                            resource_record = validation_option.get('ResourceRecord', {})
-                            record_name = resource_record.get('Name', 'N/A')
-                            record_type = resource_record.get('Type', 'N/A')
-                            record_value = resource_record.get('Value', 'N/A')
-
-                            # Validation emails (for email validation)
-                            validation_emails = validation_option.get('ValidationEmails', [])
-                            validation_emails_str = ', '.join(validation_emails) if validation_emails else 'N/A'
-
-                            all_validations.append({
-                                'Region': region,
-                                'Certificate Domain': domain_name,
-                                'Validation Domain': validation_domain,
-                                'Validation Method': validation_method,
-                                'Validation Status': validation_status,
-                                'DNS Record Name': record_name,
-                                'DNS Record Type': record_type,
-                                'DNS Record Value': record_value,
-                                'Validation Emails': validation_emails_str
-                            })
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get validation details for {cert_arn}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting validation details in region {region}", e)
+    # Use concurrent scanning
+    all_validations = utils.scan_regions_concurrent(
+        regions=regions,
+        scan_function=scan_certificate_validation_details_in_region,
+        resource_type="certificate validation details"
+    )
 
     utils.log_success(f"Total validation details collected: {len(all_validations)}")
     return all_validations
