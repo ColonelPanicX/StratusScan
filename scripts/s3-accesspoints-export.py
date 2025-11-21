@@ -49,7 +49,11 @@ def print_title() -> tuple:
     print("AWS S3 ACCESS POINTS COMPREHENSIVE EXPORT SCRIPT")
     print("====================================================================")
     print("Version: v1.0.0                       Date: NOV-13-2025")
-    print("Environment: AWS Commercial")
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+    
+    print(f"Environment: {partition_name}")
     print("====================================================================")
 
     # Get account information using utils

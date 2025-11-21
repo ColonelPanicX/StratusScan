@@ -67,6 +67,10 @@ def print_title_screen():
         account_id = "UNKNOWN"
         account_name = "UNKNOWN-ACCOUNT"
 
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
     # Print the title screen with account information
     print("====================================================================")
     print("                   AWS RESOURCE SCANNER                            ")
@@ -74,7 +78,7 @@ def print_title_screen():
     print("AWS ELB INVENTORY EXPORT SCRIPT")
     print("====================================================================")
     print("Version: v2.0.0                             Date: AUG-19-2025")
-    print("Environment: AWS Commercial")
+    print(f"Environment: {partition_name}")
     print("====================================================================")
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")

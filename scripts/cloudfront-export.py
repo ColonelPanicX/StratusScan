@@ -61,7 +61,11 @@ def print_title():
     print("         AWS CLOUDFRONT DISTRIBUTION EXPORT TOOL")
     print("====================================================================")
     print("Version: v1.0.0                        Date: NOV-09-2025")
-    print("Environment: AWS Commercial")
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+    
+    print(f"Environment: {partition_name}")
     print("====================================================================")
 
     # Get the current AWS account ID
@@ -516,7 +520,14 @@ def export_cloudfront_data(account_id: str, account_name: str):
 def main():
     """Main function to execute the script."""
     try:
-        # Print title and get account information
+        # Check if running in GovCloud partition
+        partition = utils.detect_partition()
+        if partition == 'aws-us-gov':
+            print(f"\nERROR: CloudFront is not available in AWS GovCloud")
+            print("This service operates outside the GovCloud boundary")
+            utils.log_error(f"CloudFront is not supported in GovCloud partition")
+            sys.exit(1)
+
         account_id, account_name = print_title()
 
         # Check and install dependencies

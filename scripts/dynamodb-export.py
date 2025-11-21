@@ -58,7 +58,11 @@ def print_title():
     print("                 AWS DYNAMODB EXPORT TOOL")
     print("====================================================================")
     print("Version: v1.0.0                        Date: NOV-09-2025")
-    print("Environment: AWS Commercial")
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+    
+    print(f"Environment: {partition_name}")
     print("====================================================================")
 
     # Get the current AWS account ID
@@ -467,7 +471,16 @@ def export_dynamodb_data(account_id: str, account_name: str):
     # Ask for region selection
     print("\n" + "=" * 60)
     print("AWS Region Selection:")
-    print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1")
+
+    # Detect partition for region examples
+    partition = utils.detect_partition()
+    if partition == 'aws-us-gov':
+        print("Available AWS GovCloud regions: us-gov-west-1, us-gov-east-1")
+        example_regions = "us-gov-west-1, us-gov-east-1"
+    else:
+        print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1, etc.")
+        example_regions = "us-east-1, us-west-1, us-west-2, eu-west-1"
+
     region_input = input("Would you like all AWS regions (type \"all\") or a specific region (ex. \"us-east-1\")? ").strip().lower()
 
     # Get all available AWS regions
@@ -485,7 +498,9 @@ def export_dynamodb_data(account_id: str, account_name: str):
             region_text = f"AWS region {region_input}"
             region_suffix = f"-{region_input}"
         else:
-            utils.log_warning(f"'{region_input}' is not a valid AWS region. Using all AWS regions.")
+            utils.log_warning(f"'{region_input}' is not a valid AWS region.")
+            utils.log_info(f"Valid AWS regions include: {example_regions}")
+            utils.log_warning("Using all AWS regions instead.")
             regions = all_available_regions
             region_text = "all AWS regions"
             region_suffix = ""

@@ -506,7 +506,7 @@ def generate_summary(cas: List[Dict[str, Any]],
     # CAs summary
     total_cas = len(cas)
     active_cas = sum(1 for ca in cas if ca.get('Status', '') == 'ACTIVE')
-    root_cas = sum(1 for ca in ca s if ca.get('Type', '') == 'ROOT')
+    root_cas = sum(1 for ca in cas if ca.get('Type', '') == 'ROOT')
     subordinate_cas = sum(1 for ca in cas if ca.get('Type', '') == 'SUBORDINATE')
 
     summary.append({

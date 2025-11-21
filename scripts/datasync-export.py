@@ -633,6 +633,10 @@ def main():
         utils.log_info("Getting AWS account information...")
         account_id, account_name = utils.get_account_info()
 
+        # Detect partition and set environment name
+        partition = utils.detect_partition()
+        partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
         # Print script header
         print("\n====================================================================")
         print("                   AWS RESOURCE SCANNER                            ")
@@ -641,7 +645,7 @@ def main():
         print("====================================================================")
         print(f"Account ID: {account_id}")
         print(f"Account Name: {account_name}")
-        print(f"Environment: AWS Commercial")
+        print(f"Environment: {partition_name}")
         print("====================================================================\n")
 
         # Region selection

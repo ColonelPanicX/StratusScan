@@ -68,7 +68,11 @@ def print_title():
     print("AWS SHIELD ADVANCED INFORMATION COLLECTION")
     print("====================================================================")
     print("Version: v1.0.0                       Date: NOV-11-2025")
-    print("Environment: AWS Commercial")
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+    
+    print(f"Environment: {partition_name}")
     print("====================================================================")
     print("IMPORTANT: Shield Advanced is a premium service (~$3000/month)")
     print("This script checks subscription status before proceeding")

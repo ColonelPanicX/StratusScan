@@ -59,7 +59,11 @@ def print_title():
     print("AWS IAM IDENTITY CENTER GROUPS EXPORT")
     print("====================================================================")
     print("Version: v2.0.0                       Date: SEP-23-2025")
-    print("Environment: AWS Commercial")
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+    
+    print(f"Environment: {partition_name}")
     print("====================================================================")
 
     # Get account information
