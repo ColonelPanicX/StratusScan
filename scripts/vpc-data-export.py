@@ -54,27 +54,33 @@ def print_title():
     print("AWS VPC, SUBNET, NAT GATEWAY, PEERING, AND ELASTIC IP EXPORT TOOL")
     print("====================================================================")
     print("Version: v2.0.0                        Date: AUG-19-2025")
-    print("Environment: AWS Commercial")
-    print("====================================================================")
-    
+
     # Get the current AWS account ID and validate AWS environment
     try:
         # Create a new STS client to get the current account ID
         sts_client = utils.get_boto3_client('sts')
         # Call get-caller-identity to retrieve the account ID
         account_id = sts_client.get_caller_identity().get('Account')
-        
+
+        # Detect partition and set environment name
+        partition = utils.detect_partition()
+        partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
         # Validate we're in AWS
         caller_arn = sts_client.get_caller_identity()['Arn']
         account_name = utils.get_account_name(account_id, default=account_id)
-        
+
+        print(f"Environment: {partition_name}")
+        print("====================================================================")
         print(f"Account ID: {account_id}")
         print(f"Account Name: {account_name}")
     except Exception as e:
+        print("Environment: AWS Commercial")
+        print("====================================================================")
         print("Could not determine account information.")
         account_id = "unknown"
         account_name = "unknown"
-    
+
     print("====================================================================")
     return account_id, account_name
 
@@ -588,11 +594,18 @@ def export_vpc_subnet_natgw_peering_info(account_id, account_name):
     """
     Export VPC, subnet, NAT Gateway, VPC Peering, and Elastic IP information to an Excel file.
     Uses AWS regions and includes AWS identifiers in filenames.
-    
+
     Args:
         account_id: The AWS account ID
         account_name: The AWS account name
     """
+    # Detect partition and set partition-appropriate region examples
+    partition = utils.detect_partition()
+    if partition == 'aws-us-gov':
+        example_regions = "us-gov-west-1, us-gov-east-1"
+    else:
+        example_regions = "us-east-1, us-west-1, us-west-2, eu-west-1"
+
     # Display menu for user selection
     print("\n" + "=" * 60)
     print("What would you like to export?")
@@ -602,7 +615,7 @@ def export_vpc_subnet_natgw_peering_info(account_id, account_name):
     print("4. Elastic IP")
     print("5. All of the Above")
     print("=" * 60)
-    
+
     # Get user selection
     while True:
         try:
@@ -614,17 +627,17 @@ def export_vpc_subnet_natgw_peering_info(account_id, account_name):
                 print("Please enter a number between 1 and 5.")
         except ValueError:
             print("Please enter a valid number.")
-    
+
     # Determine what to export based on user choice
     export_vpc_subnet = choice in [1, 5]
     export_nat_gateways = choice in [2, 5]
     export_vpc_peering = choice in [3, 5]
     export_elastic_ip = choice in [4, 5]
-    
+
     # Ask for AWS region selection
     print("\n" + "=" * 60)
     print("AWS Region Selection:")
-    print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1")
+    print(f"Available AWS regions: {example_regions}")
     region_input = input("Would you like all AWS regions (type \"all\") or a specific region (ex. \"us-east-1\")? ").strip().lower()
     
     # Get all available AWS regions

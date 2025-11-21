@@ -71,17 +71,22 @@ def print_title():
         sts_client = utils.get_boto3_client('sts')
         account_id = sts_client.get_caller_identity()['Account']
 
+        # Detect partition and set environment name
+        partition = utils.detect_partition()
+        partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
         # Validate AWS environment
         caller_arn = sts_client.get_caller_identity()['Arn']
         account_name = utils.get_account_name(account_id, default="UNKNOWN-ACCOUNT")
+        print(f"Environment: {partition_name}")
         print(f"Account ID: {account_id}")
         print(f"Account Name: {account_name}")
-        print(f"Environment: AWS Commercial")
     except Exception as e:
         utils.log_error("Unable to determine account information", e)
+        print("Environment: AWS Commercial")
         account_id = "UNKNOWN"
         account_name = "UNKNOWN-ACCOUNT"
-    
+
     print("====================================================================")
     return account_id, account_name
 
@@ -621,15 +626,22 @@ def main():
             utils.log_info("Exiting script...")
             sys.exit(0)
     
+    # Detect partition and set partition-appropriate region examples
+    partition = utils.detect_partition()
+    if partition == 'aws-us-gov':
+        example_regions = "us-gov-west-1, us-gov-east-1"
+    else:
+        example_regions = "us-east-1, us-west-1, us-west-2, eu-west-1"
+
     # Get user input for AWS region selection
     print("\nAWS Region Selection:")
     print("Would you like the information for all AWS regions or a specific region?")
-    print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1")
+    print(f"Available AWS regions: {example_regions}")
     region_choice = input("If all, write \"all\", or specify a AWS region name: ").strip().lower()
-    
+
     # Get all available AWS regions for validation
     all_aws_regions = get_aws_regions()
-    
+
     # Determine which regions to scan based on user input
     if region_choice == "all":
         regions_to_scan = all_aws_regions
@@ -639,7 +651,7 @@ def main():
         # Validate the region name against available AWS regions
         if not is_valid_aws_region(region_choice):
             utils.log_warning(f"'{region_choice}' is not a valid AWS region.")
-            utils.log_info("Valid AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1")
+            utils.log_info(f"Valid AWS regions include: {example_regions}")
             utils.log_info("Defaulting to scanning all AWS regions.")
             regions_to_scan = all_aws_regions
             region_filter = None

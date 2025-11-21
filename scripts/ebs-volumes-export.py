@@ -316,12 +316,16 @@ def print_title():
     print("               AWS EBS VOLUME DATA EXPORT                         ")
     print("====================================================================")
     print("Version: v1.2.0                               Date: SEP-30-2025")
-    print("Environment: AWS Commercial")
-    print("====================================================================")
 
     # Get account information using utils
     account_id, account_name = utils.get_account_info()
 
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
+    print(f"Environment: {partition_name}")
+    print("====================================================================")
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")
@@ -402,13 +406,20 @@ def main():
             sys.exit(1)
 
         utils.log_info(f"Found {len(all_regions)} AWS regions: {', '.join(all_regions)}")
-        
+
+        # Detect partition and set partition-appropriate region examples
+        partition = utils.detect_partition()
+        if partition == 'aws-us-gov':
+            example_regions = "us-gov-west-1, us-gov-east-1"
+        else:
+            example_regions = "us-east-1, us-west-1, us-west-2, eu-west-1"
+
         # Prompt user for AWS region selection
         print("\nAWS Region Selection:")
         print("Would you like the information for all AWS regions or a specific region?")
-        print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1, etc.")
+        print(f"Available AWS regions: {example_regions}")
         region_input = input("If all, write \"all\", or specify an AWS region name: ").strip().lower()
-        
+
         # Determine which AWS regions to scan
         if region_input == "all":
             regions = all_regions
@@ -420,7 +431,7 @@ def main():
                 utils.log_info(f"Collecting EBS data from AWS region: {region_input}")
             else:
                 utils.log_warning(f"'{region_input}' is not a valid AWS region.")
-                utils.log_info("Valid AWS regions include: us-east-1, us-west-1, us-west-2, eu-west-1")
+                utils.log_info(f"Valid AWS regions include: {example_regions}")
                 utils.log_info("Defaulting to all AWS regions...")
                 regions = all_regions
                 region_input = "all"

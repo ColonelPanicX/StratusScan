@@ -639,6 +639,10 @@ def main():
         utils.log_info("Getting AWS account information...")
         account_id, account_name = utils.get_account_info()
 
+        # Detect partition and set environment name
+        partition = utils.detect_partition()
+        partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
         # Print script header
         print("\n====================================================================")
         print("                   AWS RESOURCE SCANNER                            ")
@@ -647,7 +651,7 @@ def main():
         print("====================================================================")
         print(f"Account ID: {account_id}")
         print(f"Account Name: {account_name}")
-        print(f"Environment: AWS Commercial")
+        print(f"Environment: {partition_name}")
         print("====================================================================\n")
         
         if account_name == "UNKNOWN-ACCOUNT":
@@ -683,13 +687,21 @@ def main():
         # Get AWS region preference
         print("\nAWS Region Selection:")
         print("Would you like the information for all AWS regions or a specific region?")
-        print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1, etc.")
+
+        # Show partition-appropriate region examples
+        if partition == 'aws-us-gov':
+            print("Available AWS GovCloud regions: us-gov-west-1, us-gov-east-1")
+            example_regions = "us-gov-west-1, us-gov-east-1"
+        else:
+            print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1, etc.")
+            example_regions = "us-east-1, us-west-1, us-west-2, eu-west-1"
+
         region_choice = input("If all, write \"all\", or specify an AWS region name: ").lower().strip()
 
         if region_choice != "all":
             if not is_valid_aws_region(region_choice):
                 utils.log_warning(f"'{region_choice}' is not a valid AWS region.")
-                utils.log_info("Valid AWS regions include: us-east-1, us-west-1, us-west-2, eu-west-1")
+                utils.log_info(f"Valid AWS regions include: {example_regions}")
                 utils.log_info("Checking all available AWS regions instead.")
                 region_choice = "all"
         

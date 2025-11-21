@@ -62,12 +62,16 @@ def print_title():
     print("AWS S3 BUCKET INVENTORY EXPORT SCRIPT")
     print("====================================================================")
     print("Version: v2.0.0                       Date: AUG-19-2025")
-    print("Environment: AWS Commercial")
-    print("====================================================================")
 
     # Get account information using utils
     account_id, account_name = utils.get_account_info()
 
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
+    print(f"Environment: {partition_name}")
+    print("====================================================================")
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")
@@ -586,6 +590,13 @@ def main():
     # Parse arguments
     args = parser.parse_args()
     
+    # Detect partition and set partition-appropriate region examples
+    partition = utils.detect_partition()
+    if partition == 'aws-us-gov':
+        example_regions = "us-gov-west-1, us-gov-east-1"
+    else:
+        example_regions = "us-east-1, us-west-1, us-west-2, eu-west-1"
+
     # Check for non-interactive mode
     if args.non_interactive:
         # Use environment variables for configuration
@@ -595,20 +606,20 @@ def main():
         # Prompt user for AWS region selection
         print("\nAWS Region Selection:")
         print("Would you like the information for all AWS regions or a specific region?")
-        print("Available AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1")
+        print(f"Available AWS regions: {example_regions}")
         region_input = input("If all, write \"all\", or specify a AWS region name: ").strip().lower()
-    
+
     # Set target_region based on user input or command line argument
     if args.region:
         target_region = args.region if args.region.lower() != 'all' else None
     else:
         target_region = None if region_input.lower() == 'all' else region_input
-    
+
     # Validate region if a specific one was provided
     if target_region:
         if not is_valid_aws_region(target_region):
             utils.log_warning(f"'{target_region}' is not a valid AWS region.")
-            utils.log_info("Valid AWS regions: us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1")
+            utils.log_info(f"Valid AWS regions include: {example_regions}")
             utils.log_info("Checking all AWS regions instead.")
             target_region = None
 

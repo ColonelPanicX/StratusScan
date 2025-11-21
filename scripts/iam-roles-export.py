@@ -63,11 +63,16 @@ def print_title():
     print("AWS IAM ROLE INFORMATION COLLECTION")
     print("====================================================================")
     print("Version: v2.0.0                       Date: SEP-22-2025")
-    print("Environment: AWS Commercial")
-    print("====================================================================")
 
     # Get account information
     account_id, account_name = utils.get_account_info()
+
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
+    print(f"Environment: {partition_name}")
+    print("====================================================================")
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")

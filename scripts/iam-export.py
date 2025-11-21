@@ -117,7 +117,7 @@ def get_account_info():
 def print_title():
     """
     Print the script title and account information.
-    
+
     Returns:
         tuple: (account_id, account_name)
     """
@@ -127,15 +127,20 @@ def print_title():
     print("AWS IAM USER INFORMATION COLLECTION")
     print("====================================================================")
     print("Version: v2.0.0                       Date: AUG-26-2025")
-    print("Environment: AWS Commercial")
-    print("====================================================================")
-    
+
     # Get account information
     account_id, account_name = get_account_info()
+
+    # Detect partition and set environment name
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
+    print(f"Environment: {partition_name}")
+    print("====================================================================")
     print(f"Account ID: {account_id}")
     print(f"Account Name: {account_name}")
     print("====================================================================")
-    
+
     return account_id, account_name
 
 def calculate_age_in_days(date_obj):
