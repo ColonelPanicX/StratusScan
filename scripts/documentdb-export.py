@@ -38,13 +38,11 @@ except ImportError:
     sys.exit(1)
 
 
-@utils.aws_error_handler("Collecting DocumentDB clusters", default_return=[])
-def collect_documentdb_clusters(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect DocumentDB cluster information from AWS regions."""
-    all_clusters = []
+def _scan_documentdb_clusters_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for DocumentDB clusters."""
+    clusters_data = []
 
-    for region in regions:
-        utils.log_info(f"Scanning DocumentDB clusters in {region}...")
+    try:
         docdb_client = utils.get_boto3_client('docdb', region_name=region)
 
         paginator = docdb_client.get_paginator('describe_db_clusters')
@@ -118,7 +116,7 @@ def collect_documentdb_clusters(regions: List[str]) -> List[Dict[str, Any]]:
                 enabled_cloudwatch_logs_exports = cluster.get('EnabledCloudwatchLogsExports', [])
                 logs_exports_str = ', '.join(enabled_cloudwatch_logs_exports) if enabled_cloudwatch_logs_exports else 'None'
 
-                all_clusters.append({
+                clusters_data.append({
                     'Region': region,
                     'Cluster ID': cluster_id,
                     'Engine': engine,
@@ -144,18 +142,26 @@ def collect_documentdb_clusters(regions: List[str]) -> List[Dict[str, Any]]:
                     'CloudWatch Logs': logs_exports_str,
                 })
 
-        utils.log_success(f"Collected {len([c for c in all_clusters if c['Region'] == region])} DocumentDB clusters from {region}")
+    except Exception as e:
+        utils.log_error(f"Error collecting DocumentDB clusters in {region}", e)
 
+    return clusters_data
+
+
+@utils.aws_error_handler("Collecting DocumentDB clusters", default_return=[])
+def collect_documentdb_clusters(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect DocumentDB cluster information from AWS regions."""
+    results = utils.scan_regions_concurrent(regions, _scan_documentdb_clusters_region)
+    all_clusters = [cluster for result in results for cluster in result]
+    utils.log_success(f"Collected {len(all_clusters)} DocumentDB clusters")
     return all_clusters
 
 
-@utils.aws_error_handler("Collecting DocumentDB instances", default_return=[])
-def collect_documentdb_instances(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect DocumentDB instance information from AWS regions."""
-    all_instances = []
+def _scan_documentdb_instances_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for DocumentDB instances."""
+    instances_data = []
 
-    for region in regions:
-        utils.log_info(f"Scanning DocumentDB instances in {region}...")
+    try:
         docdb_client = utils.get_boto3_client('docdb', region_name=region)
 
         paginator = docdb_client.get_paginator('describe_db_instances')
@@ -206,7 +212,7 @@ def collect_documentdb_instances(regions: List[str]) -> List[Dict[str, Any]]:
                 enabled_cloudwatch_logs_exports = instance.get('EnabledCloudwatchLogsExports', [])
                 logs_exports_str = ', '.join(enabled_cloudwatch_logs_exports) if enabled_cloudwatch_logs_exports else 'None'
 
-                all_instances.append({
+                instances_data.append({
                     'Region': region,
                     'Instance ID': instance_id,
                     'Cluster ID': cluster_id,
@@ -225,18 +231,26 @@ def collect_documentdb_instances(regions: List[str]) -> List[Dict[str, Any]]:
                     'CloudWatch Logs': logs_exports_str,
                 })
 
-        utils.log_success(f"Collected {len([i for i in all_instances if i['Region'] == region])} DocumentDB instances from {region}")
+    except Exception as e:
+        utils.log_error(f"Error collecting DocumentDB instances in {region}", e)
 
+    return instances_data
+
+
+@utils.aws_error_handler("Collecting DocumentDB instances", default_return=[])
+def collect_documentdb_instances(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect DocumentDB instance information from AWS regions."""
+    results = utils.scan_regions_concurrent(regions, _scan_documentdb_instances_region)
+    all_instances = [instance for result in results for instance in result]
+    utils.log_success(f"Collected {len(all_instances)} DocumentDB instances")
     return all_instances
 
 
-@utils.aws_error_handler("Collecting DocumentDB snapshots", default_return=[])
-def collect_documentdb_snapshots(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect DocumentDB cluster snapshot information from AWS regions."""
-    all_snapshots = []
+def _scan_documentdb_snapshots_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for DocumentDB cluster snapshots."""
+    snapshots_data = []
 
-    for region in regions:
-        utils.log_info(f"Scanning DocumentDB snapshots in {region}...")
+    try:
         docdb_client = utils.get_boto3_client('docdb', region_name=region)
 
         paginator = docdb_client.get_paginator('describe_db_cluster_snapshots')
@@ -282,7 +296,7 @@ def collect_documentdb_snapshots(regions: List[str]) -> List[Dict[str, Any]]:
                 # Cluster snapshot ARN
                 snapshot_arn = snapshot.get('DBClusterSnapshotArn', 'N/A')
 
-                all_snapshots.append({
+                snapshots_data.append({
                     'Region': region,
                     'Snapshot ID': snapshot_id,
                     'Cluster ID': cluster_id,
@@ -300,18 +314,26 @@ def collect_documentdb_snapshots(regions: List[str]) -> List[Dict[str, Any]]:
                     'Snapshot ARN': snapshot_arn,
                 })
 
-        utils.log_success(f"Collected {len([s for s in all_snapshots if s['Region'] == region])} DocumentDB snapshots from {region}")
+    except Exception as e:
+        utils.log_error(f"Error collecting DocumentDB snapshots in {region}", e)
 
+    return snapshots_data
+
+
+@utils.aws_error_handler("Collecting DocumentDB snapshots", default_return=[])
+def collect_documentdb_snapshots(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect DocumentDB cluster snapshot information from AWS regions."""
+    results = utils.scan_regions_concurrent(regions, _scan_documentdb_snapshots_region)
+    all_snapshots = [snapshot for result in results for snapshot in result]
+    utils.log_success(f"Collected {len(all_snapshots)} DocumentDB snapshots")
     return all_snapshots
 
 
-@utils.aws_error_handler("Collecting DocumentDB subnet groups", default_return=[])
-def collect_documentdb_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]:
-    """Collect DocumentDB subnet group information from AWS regions."""
-    all_subnet_groups = []
+def _scan_documentdb_subnet_groups_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for DocumentDB subnet groups."""
+    subnet_groups_data = []
 
-    for region in regions:
-        utils.log_info(f"Scanning DocumentDB subnet groups in {region}...")
+    try:
         docdb_client = utils.get_boto3_client('docdb', region_name=region)
 
         paginator = docdb_client.get_paginator('describe_db_subnet_groups')
@@ -345,7 +367,7 @@ def collect_documentdb_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]
                 # ARN
                 subnet_group_arn = sg.get('DBSubnetGroupArn', 'N/A')
 
-                all_subnet_groups.append({
+                subnet_groups_data.append({
                     'Region': region,
                     'Subnet Group Name': subnet_group_name,
                     'Description': description,
@@ -357,8 +379,18 @@ def collect_documentdb_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]
                     'Subnet Group ARN': subnet_group_arn,
                 })
 
-        utils.log_success(f"Collected {len([sg for sg in all_subnet_groups if sg['Region'] == region])} DocumentDB subnet groups from {region}")
+    except Exception as e:
+        utils.log_error(f"Error collecting DocumentDB subnet groups in {region}", e)
 
+    return subnet_groups_data
+
+
+@utils.aws_error_handler("Collecting DocumentDB subnet groups", default_return=[])
+def collect_documentdb_subnet_groups(regions: List[str]) -> List[Dict[str, Any]]:
+    """Collect DocumentDB subnet group information from AWS regions."""
+    results = utils.scan_regions_concurrent(regions, _scan_documentdb_subnet_groups_region)
+    all_subnet_groups = [sg for result in results for sg in result]
+    utils.log_success(f"Collected {len(all_subnet_groups)} DocumentDB subnet groups")
     return all_subnet_groups
 
 

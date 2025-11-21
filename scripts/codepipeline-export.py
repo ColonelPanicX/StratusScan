@@ -66,263 +66,275 @@ def check_dependencies():
     utils.log_success("All dependencies are installed")
 
 
+def _scan_pipelines_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for CodePipeline pipelines."""
+    pipelines_data = []
+
+    try:
+        codepipeline_client = utils.get_boto3_client('codepipeline', region_name=region)
+
+        # List all pipelines
+        paginator = codepipeline_client.get_paginator('list_pipelines')
+        for page in paginator.paginate():
+            pipeline_summaries = page.get('pipelines', [])
+
+            for pipeline_summary in pipeline_summaries:
+                pipeline_name = pipeline_summary.get('name', 'N/A')
+
+                # Get detailed pipeline information
+                try:
+                    pipeline_response = codepipeline_client.get_pipeline(name=pipeline_name)
+                    pipeline = pipeline_response.get('pipeline', {})
+                    metadata = pipeline_response.get('metadata', {})
+
+                    # Basic info
+                    arn = metadata.get('pipelineArn', 'N/A')
+
+                    created = pipeline_summary.get('created', metadata.get('created', 'N/A'))
+                    if created != 'N/A':
+                        created = created.strftime('%Y-%m-%d %H:%M:%S')
+
+                    updated = pipeline_summary.get('updated', metadata.get('updated', 'N/A'))
+                    if updated != 'N/A':
+                        updated = updated.strftime('%Y-%m-%d %H:%M:%S')
+
+                    # Version
+                    version = pipeline_summary.get('version', pipeline.get('version', 'N/A'))
+
+                    # Role
+                    role_arn = pipeline.get('roleArn', 'N/A')
+
+                    # Artifact store
+                    artifact_store = pipeline.get('artifactStore', {})
+                    artifact_type = artifact_store.get('type', 'N/A')
+                    artifact_location = artifact_store.get('location', 'N/A')
+
+                    # Encryption key
+                    encryption_key = artifact_store.get('encryptionKey', {})
+                    kms_key_id = encryption_key.get('id', 'None')
+
+                    # Stages
+                    stages = pipeline.get('stages', [])
+                    stage_count = len(stages)
+                    stage_names = [s.get('name', 'N/A') for s in stages]
+                    stages_str = ' → '.join(stage_names)
+
+                    # Count actions across all stages
+                    total_actions = sum(len(stage.get('actions', [])) for stage in stages)
+
+                    # Get pipeline state for execution info
+                    try:
+                        state_response = codepipeline_client.get_pipeline_state(name=pipeline_name)
+                        state = state_response
+
+                        # Latest execution
+                        stage_states = state.get('stageStates', [])
+                        if stage_states:
+                            latest_execution = stage_states[0].get('latestExecution', {})
+                            latest_status = latest_execution.get('status', 'N/A')
+                        else:
+                            latest_status = 'No Executions'
+
+                    except Exception:
+                        latest_status = 'Unknown'
+
+                    pipelines_data.append({
+                        'Region': region,
+                        'Pipeline Name': pipeline_name,
+                        'ARN': arn,
+                        'Version': version,
+                        'Created': created,
+                        'Updated': updated,
+                        'Latest Status': latest_status,
+                        'Stage Count': stage_count,
+                        'Total Actions': total_actions,
+                        'Stages': stages_str,
+                        'Role ARN': role_arn,
+                        'Artifact Store Type': artifact_type,
+                        'Artifact Location': artifact_location,
+                        'KMS Key ID': kms_key_id
+                    })
+
+                except Exception as e:
+                    utils.log_warning(f"Could not get details for pipeline {pipeline_name} in {region}: {str(e)}")
+                    continue
+
+    except Exception as e:
+        utils.log_error(f"Error scanning CodePipeline pipelines in {region}", e)
+
+    return pipelines_data
+
+
 @utils.aws_error_handler("Collecting CodePipeline pipelines", default_return=[])
 def collect_pipelines(regions: List[str]) -> List[Dict[str, Any]]:
     """Collect CodePipeline pipeline information from AWS regions."""
-    all_pipelines = []
+    results = utils.scan_regions_concurrent(regions, _scan_pipelines_region)
+    all_pipelines = [pipeline for result in results for pipeline in result]
+    utils.log_success(f"Collected {len(all_pipelines)} CodePipeline pipelines")
+    return all_pipelines
 
-    for region in regions:
-        utils.log_info(f"Collecting CodePipeline pipelines in {region}...")
+
+def _scan_executions_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for pipeline executions."""
+    executions_data = []
+
+    try:
         codepipeline_client = utils.get_boto3_client('codepipeline', region_name=region)
 
-        try:
-            # List all pipelines
-            paginator = codepipeline_client.get_paginator('list_pipelines')
-            for page in paginator.paginate():
-                pipeline_summaries = page.get('pipelines', [])
+        # List all pipelines first
+        paginator = codepipeline_client.get_paginator('list_pipelines')
+        for page in paginator.paginate():
+            pipeline_summaries = page.get('pipelines', [])
 
-                for pipeline_summary in pipeline_summaries:
-                    pipeline_name = pipeline_summary.get('name', 'N/A')
+            for pipeline_summary in pipeline_summaries:
+                pipeline_name = pipeline_summary.get('name', 'N/A')
 
-                    # Get detailed pipeline information
-                    try:
-                        pipeline_response = codepipeline_client.get_pipeline(name=pipeline_name)
-                        pipeline = pipeline_response.get('pipeline', {})
-                        metadata = pipeline_response.get('metadata', {})
+                # Get executions for this pipeline (limit to 10 most recent)
+                try:
+                    exec_paginator = codepipeline_client.get_paginator('list_pipeline_executions')
+                    exec_count = 0
+                    for exec_page in exec_paginator.paginate(
+                        pipelineName=pipeline_name,
+                        PaginationConfig={'MaxItems': 10}
+                    ):
+                        executions = exec_page.get('pipelineExecutionSummaries', [])
 
-                        # Basic info
-                        arn = metadata.get('pipelineArn', 'N/A')
+                        for execution in executions:
+                            execution_id = execution.get('pipelineExecutionId', 'N/A')
+                            status = execution.get('status', 'N/A')
 
-                        created = pipeline_summary.get('created', metadata.get('created', 'N/A'))
-                        if created != 'N/A':
-                            created = created.strftime('%Y-%m-%d %H:%M:%S')
+                            start_time = execution.get('startTime', 'N/A')
+                            if start_time != 'N/A':
+                                start_time = start_time.strftime('%Y-%m-%d %H:%M:%S')
 
-                        updated = pipeline_summary.get('updated', metadata.get('updated', 'N/A'))
-                        if updated != 'N/A':
-                            updated = updated.strftime('%Y-%m-%d %H:%M:%S')
+                            last_update = execution.get('lastUpdateTime', 'N/A')
+                            if last_update != 'N/A':
+                                last_update = last_update.strftime('%Y-%m-%d %H:%M:%S')
 
-                        # Version
-                        version = pipeline_summary.get('version', pipeline.get('version', 'N/A'))
-
-                        # Role
-                        role_arn = pipeline.get('roleArn', 'N/A')
-
-                        # Artifact store
-                        artifact_store = pipeline.get('artifactStore', {})
-                        artifact_type = artifact_store.get('type', 'N/A')
-                        artifact_location = artifact_store.get('location', 'N/A')
-
-                        # Encryption key
-                        encryption_key = artifact_store.get('encryptionKey', {})
-                        kms_key_id = encryption_key.get('id', 'None')
-
-                        # Stages
-                        stages = pipeline.get('stages', [])
-                        stage_count = len(stages)
-                        stage_names = [s.get('name', 'N/A') for s in stages]
-                        stages_str = ' → '.join(stage_names)
-
-                        # Count actions across all stages
-                        total_actions = sum(len(stage.get('actions', [])) for stage in stages)
-
-                        # Get pipeline state for execution info
-                        try:
-                            state_response = codepipeline_client.get_pipeline_state(name=pipeline_name)
-                            state = state_response
-
-                            # Latest execution
-                            stage_states = state.get('stageStates', [])
-                            if stage_states:
-                                latest_execution = stage_states[0].get('latestExecution', {})
-                                latest_status = latest_execution.get('status', 'N/A')
+                            # Duration
+                            if execution.get('startTime') and execution.get('lastUpdateTime'):
+                                duration_seconds = (execution.get('lastUpdateTime') - execution.get('startTime')).total_seconds()
+                                duration_minutes = duration_seconds / 60
+                                duration_str = f"{duration_minutes:.1f} minutes"
                             else:
-                                latest_status = 'No Executions'
+                                duration_str = 'N/A'
 
-                        except Exception:
-                            latest_status = 'Unknown'
+                            # Source revisions
+                            source_revisions = execution.get('sourceRevisions', [])
+                            source_info = 'N/A'
+                            if source_revisions:
+                                first_rev = source_revisions[0]
+                                action_name = first_rev.get('actionName', 'N/A')
+                                revision_id = first_rev.get('revisionId', 'N/A')
+                                source_info = f"{action_name}: {revision_id[:8]}" if revision_id != 'N/A' else action_name
 
-                        all_pipelines.append({
-                            'Region': region,
-                            'Pipeline Name': pipeline_name,
-                            'ARN': arn,
-                            'Version': version,
-                            'Created': created,
-                            'Updated': updated,
-                            'Latest Status': latest_status,
-                            'Stage Count': stage_count,
-                            'Total Actions': total_actions,
-                            'Stages': stages_str,
-                            'Role ARN': role_arn,
-                            'Artifact Store Type': artifact_type,
-                            'Artifact Location': artifact_location,
-                            'KMS Key ID': kms_key_id
-                        })
+                            # Trigger
+                            trigger = execution.get('trigger', {})
+                            trigger_type = trigger.get('triggerType', 'N/A')
+                            trigger_detail = trigger.get('triggerDetail', 'N/A')
 
-                    except Exception as e:
-                        utils.log_warning(f"Could not get details for pipeline {pipeline_name} in {region}: {str(e)}")
-                        continue
+                            executions_data.append({
+                                'Region': region,
+                                'Pipeline Name': pipeline_name,
+                                'Execution ID': execution_id,
+                                'Status': status,
+                                'Start Time': start_time,
+                                'Last Update': last_update,
+                                'Duration': duration_str,
+                                'Source': source_info,
+                                'Trigger Type': trigger_type,
+                                'Trigger Detail': trigger_detail
+                            })
 
-        except Exception as e:
-            utils.log_warning(f"Error collecting CodePipeline pipelines in {region}: {str(e)}")
-            continue
+                            exec_count += 1
+                            if exec_count >= 10:
+                                break
 
-    utils.log_info(f"Collected {len(all_pipelines)} CodePipeline pipelines")
-    return all_pipelines
+                except Exception as e:
+                    utils.log_warning(f"Could not get executions for pipeline {pipeline_name}: {str(e)}")
+                    continue
+
+    except Exception as e:
+        utils.log_error(f"Error collecting pipeline executions in {region}", e)
+
+    return executions_data
 
 
 @utils.aws_error_handler("Collecting pipeline executions", default_return=[])
 def collect_executions(regions: List[str]) -> List[Dict[str, Any]]:
     """Collect recent pipeline execution information (limited to 10 most recent per pipeline)."""
-    all_executions = []
+    results = utils.scan_regions_concurrent(regions, _scan_executions_region)
+    all_executions = [execution for result in results for execution in result]
+    utils.log_success(f"Collected {len(all_executions)} pipeline executions (limited to 10 most recent per pipeline)")
+    return all_executions
 
-    for region in regions:
-        utils.log_info(f"Collecting pipeline executions in {region}...")
+
+def _scan_webhooks_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for pipeline webhooks."""
+    webhooks_data = []
+
+    try:
         codepipeline_client = utils.get_boto3_client('codepipeline', region_name=region)
 
-        try:
-            # List all pipelines first
-            paginator = codepipeline_client.get_paginator('list_pipelines')
-            for page in paginator.paginate():
-                pipeline_summaries = page.get('pipelines', [])
+        # List webhooks
+        paginator = codepipeline_client.get_paginator('list_webhooks')
+        for page in paginator.paginate():
+            webhooks = page.get('webhooks', [])
 
-                for pipeline_summary in pipeline_summaries:
-                    pipeline_name = pipeline_summary.get('name', 'N/A')
+            for webhook in webhooks:
+                definition = webhook.get('definition', {})
 
-                    # Get executions for this pipeline (limit to 10 most recent)
-                    try:
-                        exec_paginator = codepipeline_client.get_paginator('list_pipeline_executions')
-                        exec_count = 0
-                        for exec_page in exec_paginator.paginate(
-                            pipelineName=pipeline_name,
-                            PaginationConfig={'MaxItems': 10}
-                        ):
-                            executions = exec_page.get('pipelineExecutionSummaries', [])
+                webhook_name = definition.get('name', 'N/A')
+                target_pipeline = definition.get('targetPipeline', 'N/A')
+                target_action = definition.get('targetAction', 'N/A')
 
-                            for execution in executions:
-                                execution_id = execution.get('pipelineExecutionId', 'N/A')
-                                status = execution.get('status', 'N/A')
+                # Filters
+                filters = definition.get('filters', [])
+                filter_count = len(filters)
 
-                                start_time = execution.get('startTime', 'N/A')
-                                if start_time != 'N/A':
-                                    start_time = start_time.strftime('%Y-%m-%d %H:%M:%S')
+                # Authentication
+                authentication = definition.get('authentication', 'N/A')
+                auth_config = definition.get('authenticationConfiguration', {})
 
-                                last_update = execution.get('lastUpdateTime', 'N/A')
-                                if last_update != 'N/A':
-                                    last_update = last_update.strftime('%Y-%m-%d %H:%M:%S')
+                # URL and ARN
+                url = webhook.get('url', 'N/A')
+                arn = webhook.get('arn', 'N/A')
 
-                                # Duration
-                                if execution.get('startTime') and execution.get('lastUpdateTime'):
-                                    duration_seconds = (execution.get('lastUpdateTime') - execution.get('startTime')).total_seconds()
-                                    duration_minutes = duration_seconds / 60
-                                    duration_str = f"{duration_minutes:.1f} minutes"
-                                else:
-                                    duration_str = 'N/A'
+                # Error info
+                error_message = webhook.get('errorMessage', 'None')
+                error_code = webhook.get('errorCode', 'None')
 
-                                # Source revisions
-                                source_revisions = execution.get('sourceRevisions', [])
-                                source_info = 'N/A'
-                                if source_revisions:
-                                    first_rev = source_revisions[0]
-                                    action_name = first_rev.get('actionName', 'N/A')
-                                    revision_id = first_rev.get('revisionId', 'N/A')
-                                    source_info = f"{action_name}: {revision_id[:8]}" if revision_id != 'N/A' else action_name
+                # Last triggered
+                last_triggered = webhook.get('lastTriggered', 'N/A')
+                if last_triggered != 'N/A':
+                    last_triggered = last_triggered.strftime('%Y-%m-%d %H:%M:%S')
 
-                                # Trigger
-                                trigger = execution.get('trigger', {})
-                                trigger_type = trigger.get('triggerType', 'N/A')
-                                trigger_detail = trigger.get('triggerDetail', 'N/A')
+                webhooks_data.append({
+                    'Region': region,
+                    'Webhook Name': webhook_name,
+                    'ARN': arn,
+                    'Target Pipeline': target_pipeline,
+                    'Target Action': target_action,
+                    'Filter Count': filter_count,
+                    'Authentication': authentication,
+                    'URL': url,
+                    'Last Triggered': last_triggered,
+                    'Error Code': error_code,
+                    'Error Message': error_message
+                })
 
-                                all_executions.append({
-                                    'Region': region,
-                                    'Pipeline Name': pipeline_name,
-                                    'Execution ID': execution_id,
-                                    'Status': status,
-                                    'Start Time': start_time,
-                                    'Last Update': last_update,
-                                    'Duration': duration_str,
-                                    'Source': source_info,
-                                    'Trigger Type': trigger_type,
-                                    'Trigger Detail': trigger_detail
-                                })
+    except Exception as e:
+        utils.log_error(f"Error collecting webhooks in {region}", e)
 
-                                exec_count += 1
-                                if exec_count >= 10:
-                                    break
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get executions for pipeline {pipeline_name}: {str(e)}")
-                        continue
-
-        except Exception as e:
-            utils.log_warning(f"Error collecting pipeline executions in {region}: {str(e)}")
-            continue
-
-    utils.log_info(f"Collected {len(all_executions)} pipeline executions (limited to 10 most recent per pipeline)")
-    return all_executions
+    return webhooks_data
 
 
 @utils.aws_error_handler("Collecting pipeline webhooks", default_return=[])
 def collect_webhooks(regions: List[str]) -> List[Dict[str, Any]]:
     """Collect CodePipeline webhook information."""
-    all_webhooks = []
-
-    for region in regions:
-        utils.log_info(f"Collecting webhooks in {region}...")
-        codepipeline_client = utils.get_boto3_client('codepipeline', region_name=region)
-
-        try:
-            # List webhooks
-            paginator = codepipeline_client.get_paginator('list_webhooks')
-            for page in paginator.paginate():
-                webhooks = page.get('webhooks', [])
-
-                for webhook in webhooks:
-                    definition = webhook.get('definition', {})
-
-                    webhook_name = definition.get('name', 'N/A')
-                    target_pipeline = definition.get('targetPipeline', 'N/A')
-                    target_action = definition.get('targetAction', 'N/A')
-
-                    # Filters
-                    filters = definition.get('filters', [])
-                    filter_count = len(filters)
-
-                    # Authentication
-                    authentication = definition.get('authentication', 'N/A')
-                    auth_config = definition.get('authenticationConfiguration', {})
-
-                    # URL and ARN
-                    url = webhook.get('url', 'N/A')
-                    arn = webhook.get('arn', 'N/A')
-
-                    # Error info
-                    error_message = webhook.get('errorMessage', 'None')
-                    error_code = webhook.get('errorCode', 'None')
-
-                    # Last triggered
-                    last_triggered = webhook.get('lastTriggered', 'N/A')
-                    if last_triggered != 'N/A':
-                        last_triggered = last_triggered.strftime('%Y-%m-%d %H:%M:%S')
-
-                    all_webhooks.append({
-                        'Region': region,
-                        'Webhook Name': webhook_name,
-                        'ARN': arn,
-                        'Target Pipeline': target_pipeline,
-                        'Target Action': target_action,
-                        'Filter Count': filter_count,
-                        'Authentication': authentication,
-                        'URL': url,
-                        'Last Triggered': last_triggered,
-                        'Error Code': error_code,
-                        'Error Message': error_message
-                    })
-
-        except Exception as e:
-            utils.log_warning(f"Error collecting webhooks in {region}: {str(e)}")
-            continue
-
-    utils.log_info(f"Collected {len(all_webhooks)} webhooks")
+    results = utils.scan_regions_concurrent(regions, _scan_webhooks_region)
+    all_webhooks = [webhook for result in results for webhook in result]
+    utils.log_success(f"Collected {len(all_webhooks)} webhooks")
     return all_webhooks
 
 

@@ -96,6 +96,118 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def _scan_fsx_file_systems_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for FSx file systems."""
+    file_systems_data = []
+
+    if not utils.validate_aws_region(region):
+        return file_systems_data
+
+    try:
+        fsx_client = utils.get_boto3_client('fsx', region_name=region)
+
+        # Get FSx file systems
+        paginator = fsx_client.get_paginator('describe_file_systems')
+
+        for page in paginator.paginate():
+            file_systems = page.get('FileSystems', [])
+
+            for fs in file_systems:
+                file_system_id = fs.get('FileSystemId', '')
+
+                # Basic information
+                file_system_type = fs.get('FileSystemType', '')
+                lifecycle = fs.get('Lifecycle', '')
+                storage_capacity = fs.get('StorageCapacity', 0)
+                storage_type = fs.get('StorageType', 'N/A')
+                vpc_id = fs.get('VpcId', 'N/A')
+
+                # Creation time
+                creation_time = fs.get('CreationTime', '')
+                if creation_time:
+                    creation_time = creation_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_time, datetime.datetime) else str(creation_time)
+
+                # DNS name
+                dns_name = fs.get('DNSName', 'N/A')
+
+                # KMS key
+                kms_key_id = fs.get('KmsKeyId', 'N/A')
+
+                # Resource ARN
+                resource_arn = fs.get('ResourceARN', '')
+
+                # Subnet IDs
+                subnet_ids = fs.get('SubnetIds', [])
+                subnet_ids_str = ', '.join(subnet_ids) if subnet_ids else 'N/A'
+
+                # Network interface IDs
+                network_interface_ids = fs.get('NetworkInterfaceIds', [])
+                eni_count = len(network_interface_ids)
+
+                # File system type-specific configuration
+                type_specific_config = 'N/A'
+                deployment_type = 'N/A'
+                throughput_capacity = 'N/A'
+
+                if file_system_type == 'WINDOWS':
+                    windows_config = fs.get('WindowsConfiguration', {})
+                    deployment_type = windows_config.get('DeploymentType', 'N/A')
+                    throughput_capacity = windows_config.get('ThroughputCapacity', 'N/A')
+                    active_directory_id = windows_config.get('ActiveDirectoryId', 'N/A')
+                    type_specific_config = f"AD: {active_directory_id}, Throughput: {throughput_capacity} MB/s"
+
+                elif file_system_type == 'LUSTRE':
+                    lustre_config = fs.get('LustreConfiguration', {})
+                    deployment_type = lustre_config.get('DeploymentType', 'N/A')
+                    per_unit_storage_throughput = lustre_config.get('PerUnitStorageThroughput', 'N/A')
+                    data_repo_config = lustre_config.get('DataRepositoryConfiguration', {})
+                    import_path = data_repo_config.get('ImportPath', 'N/A')
+                    type_specific_config = f"S3: {import_path}, Throughput: {per_unit_storage_throughput} MB/s/TiB"
+
+                elif file_system_type == 'ONTAP':
+                    ontap_config = fs.get('OntapConfiguration', {})
+                    deployment_type = ontap_config.get('DeploymentType', 'N/A')
+                    throughput_capacity = ontap_config.get('ThroughputCapacity', 'N/A')
+                    endpoint_ip_address_range = ontap_config.get('EndpointIpAddressRange', 'N/A')
+                    type_specific_config = f"Endpoint Range: {endpoint_ip_address_range}, Throughput: {throughput_capacity} MB/s"
+
+                elif file_system_type == 'OPENZFS':
+                    openzfs_config = fs.get('OpenZFSConfiguration', {})
+                    deployment_type = openzfs_config.get('DeploymentType', 'N/A')
+                    throughput_capacity = openzfs_config.get('ThroughputCapacity', 'N/A')
+                    type_specific_config = f"Throughput: {throughput_capacity} MB/s"
+
+                # Tags
+                tags = fs.get('Tags', [])
+                tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
+                tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
+
+                file_systems_data.append({
+                    'Region': region,
+                    'File System ID': file_system_id,
+                    'File System Type': file_system_type,
+                    'Lifecycle': lifecycle,
+                    'Storage Capacity (GB)': storage_capacity,
+                    'Storage Type': storage_type,
+                    'Deployment Type': deployment_type,
+                    'Throughput Capacity': throughput_capacity,
+                    'Type-Specific Config': type_specific_config,
+                    'VPC ID': vpc_id,
+                    'Subnet IDs': subnet_ids_str,
+                    'Network Interface Count': eni_count,
+                    'DNS Name': dns_name,
+                    'KMS Key ID': kms_key_id,
+                    'Creation Time': creation_time,
+                    'Tags': tags_str,
+                    'Resource ARN': resource_arn
+                })
+
+    except Exception as e:
+        utils.log_error(f"Error collecting FSx file systems in {region}", e)
+
+    return file_systems_data
+
+
 @utils.aws_error_handler("Collecting FSx file systems", default_return=[])
 def collect_fsx_file_systems(regions: List[str]) -> List[Dict[str, Any]]:
     """
@@ -108,124 +220,70 @@ def collect_fsx_file_systems(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with FSx file system information
     """
     print("\n=== COLLECTING FSx FILE SYSTEMS ===")
-    all_file_systems = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            fsx_client = utils.get_boto3_client('fsx', region_name=region)
-
-            # Get FSx file systems
-            paginator = fsx_client.get_paginator('describe_file_systems')
-            fs_count = 0
-
-            for page in paginator.paginate():
-                file_systems = page.get('FileSystems', [])
-                fs_count += len(file_systems)
-
-                for fs in file_systems:
-                    file_system_id = fs.get('FileSystemId', '')
-                    print(f"  Processing file system: {file_system_id}")
-
-                    # Basic information
-                    file_system_type = fs.get('FileSystemType', '')
-                    lifecycle = fs.get('Lifecycle', '')
-                    storage_capacity = fs.get('StorageCapacity', 0)
-                    storage_type = fs.get('StorageType', 'N/A')
-                    vpc_id = fs.get('VpcId', 'N/A')
-
-                    # Creation time
-                    creation_time = fs.get('CreationTime', '')
-                    if creation_time:
-                        creation_time = creation_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_time, datetime.datetime) else str(creation_time)
-
-                    # DNS name
-                    dns_name = fs.get('DNSName', 'N/A')
-
-                    # KMS key
-                    kms_key_id = fs.get('KmsKeyId', 'N/A')
-
-                    # Resource ARN
-                    resource_arn = fs.get('ResourceARN', '')
-
-                    # Subnet IDs
-                    subnet_ids = fs.get('SubnetIds', [])
-                    subnet_ids_str = ', '.join(subnet_ids) if subnet_ids else 'N/A'
-
-                    # Network interface IDs
-                    network_interface_ids = fs.get('NetworkInterfaceIds', [])
-                    eni_count = len(network_interface_ids)
-
-                    # File system type-specific configuration
-                    type_specific_config = 'N/A'
-                    deployment_type = 'N/A'
-                    throughput_capacity = 'N/A'
-
-                    if file_system_type == 'WINDOWS':
-                        windows_config = fs.get('WindowsConfiguration', {})
-                        deployment_type = windows_config.get('DeploymentType', 'N/A')
-                        throughput_capacity = windows_config.get('ThroughputCapacity', 'N/A')
-                        active_directory_id = windows_config.get('ActiveDirectoryId', 'N/A')
-                        type_specific_config = f"AD: {active_directory_id}, Throughput: {throughput_capacity} MB/s"
-
-                    elif file_system_type == 'LUSTRE':
-                        lustre_config = fs.get('LustreConfiguration', {})
-                        deployment_type = lustre_config.get('DeploymentType', 'N/A')
-                        per_unit_storage_throughput = lustre_config.get('PerUnitStorageThroughput', 'N/A')
-                        data_repo_config = lustre_config.get('DataRepositoryConfiguration', {})
-                        import_path = data_repo_config.get('ImportPath', 'N/A')
-                        type_specific_config = f"S3: {import_path}, Throughput: {per_unit_storage_throughput} MB/s/TiB"
-
-                    elif file_system_type == 'ONTAP':
-                        ontap_config = fs.get('OntapConfiguration', {})
-                        deployment_type = ontap_config.get('DeploymentType', 'N/A')
-                        throughput_capacity = ontap_config.get('ThroughputCapacity', 'N/A')
-                        endpoint_ip_address_range = ontap_config.get('EndpointIpAddressRange', 'N/A')
-                        type_specific_config = f"Endpoint Range: {endpoint_ip_address_range}, Throughput: {throughput_capacity} MB/s"
-
-                    elif file_system_type == 'OPENZFS':
-                        openzfs_config = fs.get('OpenZFSConfiguration', {})
-                        deployment_type = openzfs_config.get('DeploymentType', 'N/A')
-                        throughput_capacity = openzfs_config.get('ThroughputCapacity', 'N/A')
-                        type_specific_config = f"Throughput: {throughput_capacity} MB/s"
-
-                    # Tags
-                    tags = fs.get('Tags', [])
-                    tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
-                    tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
-
-                    all_file_systems.append({
-                        'Region': region,
-                        'File System ID': file_system_id,
-                        'File System Type': file_system_type,
-                        'Lifecycle': lifecycle,
-                        'Storage Capacity (GB)': storage_capacity,
-                        'Storage Type': storage_type,
-                        'Deployment Type': deployment_type,
-                        'Throughput Capacity': throughput_capacity,
-                        'Type-Specific Config': type_specific_config,
-                        'VPC ID': vpc_id,
-                        'Subnet IDs': subnet_ids_str,
-                        'Network Interface Count': eni_count,
-                        'DNS Name': dns_name,
-                        'KMS Key ID': kms_key_id,
-                        'Creation Time': creation_time,
-                        'Tags': tags_str,
-                        'Resource ARN': resource_arn
-                    })
-
-            print(f"  Found {fs_count} FSx file systems")
-
-        except Exception as e:
-            utils.log_error(f"Error processing region {region} for FSx file systems", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_fsx_file_systems_region)
+    all_file_systems = [fs for result in results for fs in result]
     utils.log_success(f"Total FSx file systems collected: {len(all_file_systems)}")
     return all_file_systems
+
+
+def _scan_fsx_backups_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for FSx backups."""
+    backups_data = []
+
+    if not utils.validate_aws_region(region):
+        return backups_data
+
+    try:
+        fsx_client = utils.get_boto3_client('fsx', region_name=region)
+
+        # Get backups
+        paginator = fsx_client.get_paginator('describe_backups')
+
+        for page in paginator.paginate():
+            backups = page.get('Backups', [])
+
+            for backup in backups:
+                backup_id = backup.get('BackupId', '')
+                file_system_id = backup.get('FileSystem', {}).get('FileSystemId', 'N/A')
+                backup_type = backup.get('Type', '')
+                lifecycle = backup.get('Lifecycle', '')
+
+                # Creation time
+                creation_time = backup.get('CreationTime', '')
+                if creation_time:
+                    creation_time = creation_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_time, datetime.datetime) else str(creation_time)
+
+                # Progress percent
+                progress_percent = backup.get('ProgressPercent', 0)
+
+                # KMS key
+                kms_key_id = backup.get('KmsKeyId', 'N/A')
+
+                # Resource ARN
+                resource_arn = backup.get('ResourceARN', '')
+
+                # Tags
+                tags = backup.get('Tags', [])
+                tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
+                tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
+
+                backups_data.append({
+                    'Region': region,
+                    'Backup ID': backup_id,
+                    'File System ID': file_system_id,
+                    'Backup Type': backup_type,
+                    'Lifecycle': lifecycle,
+                    'Progress (%)': progress_percent,
+                    'Creation Time': creation_time,
+                    'KMS Key ID': kms_key_id,
+                    'Tags': tags_str,
+                    'Resource ARN': resource_arn
+                })
+
+    except Exception as e:
+        utils.log_error(f"Error collecting FSx backups in {region}", e)
+
+    return backups_data
 
 
 @utils.aws_error_handler("Collecting FSx backups", default_return=[])
@@ -240,64 +298,8 @@ def collect_fsx_backups(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with backup information
     """
     print("\n=== COLLECTING FSx BACKUPS ===")
-    all_backups = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            fsx_client = utils.get_boto3_client('fsx', region_name=region)
-
-            # Get backups
-            paginator = fsx_client.get_paginator('describe_backups')
-
-            for page in paginator.paginate():
-                backups = page.get('Backups', [])
-
-                for backup in backups:
-                    backup_id = backup.get('BackupId', '')
-                    file_system_id = backup.get('FileSystem', {}).get('FileSystemId', 'N/A')
-                    backup_type = backup.get('Type', '')
-                    lifecycle = backup.get('Lifecycle', '')
-
-                    # Creation time
-                    creation_time = backup.get('CreationTime', '')
-                    if creation_time:
-                        creation_time = creation_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_time, datetime.datetime) else str(creation_time)
-
-                    # Progress percent
-                    progress_percent = backup.get('ProgressPercent', 0)
-
-                    # KMS key
-                    kms_key_id = backup.get('KmsKeyId', 'N/A')
-
-                    # Resource ARN
-                    resource_arn = backup.get('ResourceARN', '')
-
-                    # Tags
-                    tags = backup.get('Tags', [])
-                    tag_dict = {tag['Key']: tag['Value'] for tag in tags if 'Key' in tag and 'Value' in tag}
-                    tags_str = ', '.join([f"{k}={v}" for k, v in tag_dict.items()]) if tag_dict else 'N/A'
-
-                    all_backups.append({
-                        'Region': region,
-                        'Backup ID': backup_id,
-                        'File System ID': file_system_id,
-                        'Backup Type': backup_type,
-                        'Lifecycle': lifecycle,
-                        'Progress (%)': progress_percent,
-                        'Creation Time': creation_time,
-                        'KMS Key ID': kms_key_id,
-                        'Tags': tags_str,
-                        'Resource ARN': resource_arn
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting FSx backups in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_fsx_backups_region)
+    all_backups = [backup for result in results for backup in result]
     utils.log_success(f"Total FSx backups collected: {len(all_backups)}")
     return all_backups
 

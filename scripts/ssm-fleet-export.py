@@ -95,6 +95,92 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def _scan_managed_instances_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for SSM managed instances."""
+    instances_data = []
+
+    if not utils.validate_aws_region(region):
+        return instances_data
+
+    try:
+        ssm_client = utils.get_boto3_client('ssm', region_name=region)
+
+        paginator = ssm_client.get_paginator('describe_instance_information')
+        for page in paginator.paginate():
+            instances = page.get('InstanceInformationList', [])
+
+            for instance in instances:
+                instance_id = instance.get('InstanceId', 'N/A')
+
+                # Instance details
+                ping_status = instance.get('PingStatus', 'Unknown')
+                last_ping_time = instance.get('LastPingDateTime', '')
+                if last_ping_time:
+                    last_ping_time = last_ping_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_ping_time, datetime.datetime) else str(last_ping_time)
+
+                # Platform
+                platform_type = instance.get('PlatformType', 'N/A')
+                platform_name = instance.get('PlatformName', 'N/A')
+                platform_version = instance.get('PlatformVersion', 'N/A')
+
+                # Agent version
+                agent_version = instance.get('AgentVersion', 'N/A')
+
+                # IP address
+                ip_address = instance.get('IPAddress', 'N/A')
+
+                # Computer name
+                computer_name = instance.get('ComputerName', 'N/A')
+
+                # Association status
+                association_status = instance.get('AssociationStatus', 'Unknown')
+
+                # Last successful association
+                last_association = instance.get('LastSuccessfulAssociationExecutionDate', '')
+                if last_association:
+                    last_association = last_association.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_association, datetime.datetime) else str(last_association)
+
+                # Last association execution
+                last_assoc_exec = instance.get('LastAssociationExecutionDate', '')
+                if last_assoc_exec:
+                    last_assoc_exec = last_assoc_exec.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_assoc_exec, datetime.datetime) else str(last_assoc_exec)
+
+                # Activation ID (for on-prem instances)
+                activation_id = instance.get('ActivationId', 'N/A')
+
+                # IAM role
+                iam_role = instance.get('IamRole', 'N/A')
+
+                # Registration date
+                registration_date = instance.get('RegistrationDate', '')
+                if registration_date:
+                    registration_date = registration_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(registration_date, datetime.datetime) else str(registration_date)
+
+                instances_data.append({
+                    'Region': region,
+                    'Instance ID': instance_id,
+                    'Ping Status': ping_status,
+                    'Last Ping': last_ping_time if last_ping_time else 'Never',
+                    'Platform Type': platform_type,
+                    'Platform Name': platform_name,
+                    'Platform Version': platform_version,
+                    'Agent Version': agent_version,
+                    'IP Address': ip_address,
+                    'Computer Name': computer_name,
+                    'Association Status': association_status,
+                    'Last Successful Association': last_association if last_association else 'N/A',
+                    'Last Association Execution': last_assoc_exec if last_assoc_exec else 'N/A',
+                    'Activation ID': activation_id,
+                    'IAM Role': iam_role,
+                    'Registration Date': registration_date if registration_date else 'N/A'
+                })
+
+    except Exception as e:
+        utils.log_error(f"Error collecting managed instances in {region}", e)
+
+    return instances_data
+
+
 @utils.aws_error_handler("Collecting SSM managed instances", default_return=[])
 def collect_managed_instances(regions: List[str]) -> List[Dict[str, Any]]:
     """
@@ -107,94 +193,88 @@ def collect_managed_instances(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with managed instance information
     """
     print("\n=== COLLECTING SSM MANAGED INSTANCES ===")
-    all_instances = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            ssm_client = utils.get_boto3_client('ssm', region_name=region)
-
-            paginator = ssm_client.get_paginator('describe_instance_information')
-            for page in paginator.paginate():
-                instances = page.get('InstanceInformationList', [])
-
-                for instance in instances:
-                    instance_id = instance.get('InstanceId', 'N/A')
-
-                    print(f"  Processing instance: {instance_id}")
-
-                    # Instance details
-                    ping_status = instance.get('PingStatus', 'Unknown')
-                    last_ping_time = instance.get('LastPingDateTime', '')
-                    if last_ping_time:
-                        last_ping_time = last_ping_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_ping_time, datetime.datetime) else str(last_ping_time)
-
-                    # Platform
-                    platform_type = instance.get('PlatformType', 'N/A')
-                    platform_name = instance.get('PlatformName', 'N/A')
-                    platform_version = instance.get('PlatformVersion', 'N/A')
-
-                    # Agent version
-                    agent_version = instance.get('AgentVersion', 'N/A')
-
-                    # IP address
-                    ip_address = instance.get('IPAddress', 'N/A')
-
-                    # Computer name
-                    computer_name = instance.get('ComputerName', 'N/A')
-
-                    # Association status
-                    association_status = instance.get('AssociationStatus', 'Unknown')
-
-                    # Last successful association
-                    last_association = instance.get('LastSuccessfulAssociationExecutionDate', '')
-                    if last_association:
-                        last_association = last_association.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_association, datetime.datetime) else str(last_association)
-
-                    # Last association execution
-                    last_assoc_exec = instance.get('LastAssociationExecutionDate', '')
-                    if last_assoc_exec:
-                        last_assoc_exec = last_assoc_exec.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_assoc_exec, datetime.datetime) else str(last_assoc_exec)
-
-                    # Activation ID (for on-prem instances)
-                    activation_id = instance.get('ActivationId', 'N/A')
-
-                    # IAM role
-                    iam_role = instance.get('IamRole', 'N/A')
-
-                    # Registration date
-                    registration_date = instance.get('RegistrationDate', '')
-                    if registration_date:
-                        registration_date = registration_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(registration_date, datetime.datetime) else str(registration_date)
-
-                    all_instances.append({
-                        'Region': region,
-                        'Instance ID': instance_id,
-                        'Ping Status': ping_status,
-                        'Last Ping': last_ping_time if last_ping_time else 'Never',
-                        'Platform Type': platform_type,
-                        'Platform Name': platform_name,
-                        'Platform Version': platform_version,
-                        'Agent Version': agent_version,
-                        'IP Address': ip_address,
-                        'Computer Name': computer_name,
-                        'Association Status': association_status,
-                        'Last Successful Association': last_association if last_association else 'N/A',
-                        'Last Association Execution': last_assoc_exec if last_assoc_exec else 'N/A',
-                        'Activation ID': activation_id,
-                        'IAM Role': iam_role,
-                        'Registration Date': registration_date if registration_date else 'N/A'
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting managed instances in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_managed_instances_region)
+    all_instances = [instance for result in results for instance in result]
     utils.log_success(f"Total SSM managed instances collected: {len(all_instances)}")
     return all_instances
+
+
+def _scan_patch_compliance_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for SSM patch compliance."""
+    compliance_data = []
+
+    if not utils.validate_aws_region(region):
+        return compliance_data
+
+    try:
+        ssm_client = utils.get_boto3_client('ssm', region_name=region)
+
+        # Get instances first
+        instances_response = ssm_client.describe_instance_information()
+        instances = instances_response.get('InstanceInformationList', [])
+
+        for instance in instances:
+            instance_id = instance.get('InstanceId', '')
+
+            try:
+                # Get patch compliance for this instance
+                compliance_response = ssm_client.list_compliance_items(
+                    ResourceIds=[instance_id],
+                    Filters=[
+                        {
+                            'Key': 'ComplianceType',
+                            'Values': ['Patch'],
+                            'Type': 'EQUAL'
+                        }
+                    ]
+                )
+
+                compliance_items = compliance_response.get('ComplianceItems', [])
+
+                if compliance_items:
+                    for item in compliance_items:
+                        compliance_type = item.get('ComplianceType', 'N/A')
+                        status = item.get('Status', 'UNKNOWN')
+                        severity = item.get('Severity', 'UNSPECIFIED')
+
+                        # Execution summary
+                        execution_summary = item.get('ExecutionSummary', {})
+                        execution_time = execution_summary.get('ExecutionTime', '')
+                        if execution_time:
+                            execution_time = execution_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(execution_time, datetime.datetime) else str(execution_time)
+
+                        # Details
+                        details = item.get('Details', {})
+                        patch_group = details.get('PatchGroup', 'N/A')
+                        installed_count = details.get('InstalledCount', '0')
+                        installed_other_count = details.get('InstalledOtherCount', '0')
+                        missing_count = details.get('MissingCount', '0')
+                        failed_count = details.get('FailedCount', '0')
+                        not_applicable_count = details.get('NotApplicableCount', '0')
+
+                        compliance_data.append({
+                            'Region': region,
+                            'Instance ID': instance_id,
+                            'Compliance Type': compliance_type,
+                            'Status': status,
+                            'Severity': severity,
+                            'Patch Group': patch_group,
+                            'Installed Patches': installed_count,
+                            'Installed Other': installed_other_count,
+                            'Missing Patches': missing_count,
+                            'Failed Patches': failed_count,
+                            'Not Applicable': not_applicable_count,
+                            'Execution Time': execution_time if execution_time else 'N/A'
+                        })
+
+            except Exception as e:
+                # Some instances may not have compliance data
+                pass
+
+    except Exception as e:
+        utils.log_error(f"Error collecting patch compliance in {region}", e)
+
+    return compliance_data
 
 
 @utils.aws_error_handler("Collecting SSM patch compliance", default_return=[])
@@ -209,84 +289,75 @@ def collect_patch_compliance(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with patch compliance information
     """
     print("\n=== COLLECTING SSM PATCH COMPLIANCE ===")
-    all_compliance = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            ssm_client = utils.get_boto3_client('ssm', region_name=region)
-
-            # Get instances first
-            instances_response = ssm_client.describe_instance_information()
-            instances = instances_response.get('InstanceInformationList', [])
-
-            for instance in instances:
-                instance_id = instance.get('InstanceId', '')
-
-                try:
-                    # Get patch compliance for this instance
-                    compliance_response = ssm_client.list_compliance_items(
-                        ResourceIds=[instance_id],
-                        Filters=[
-                            {
-                                'Key': 'ComplianceType',
-                                'Values': ['Patch'],
-                                'Type': 'EQUAL'
-                            }
-                        ]
-                    )
-
-                    compliance_items = compliance_response.get('ComplianceItems', [])
-
-                    if compliance_items:
-                        for item in compliance_items:
-                            compliance_type = item.get('ComplianceType', 'N/A')
-                            status = item.get('Status', 'UNKNOWN')
-                            severity = item.get('Severity', 'UNSPECIFIED')
-
-                            # Execution summary
-                            execution_summary = item.get('ExecutionSummary', {})
-                            execution_time = execution_summary.get('ExecutionTime', '')
-                            if execution_time:
-                                execution_time = execution_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(execution_time, datetime.datetime) else str(execution_time)
-
-                            # Details
-                            details = item.get('Details', {})
-                            patch_group = details.get('PatchGroup', 'N/A')
-                            installed_count = details.get('InstalledCount', '0')
-                            installed_other_count = details.get('InstalledOtherCount', '0')
-                            missing_count = details.get('MissingCount', '0')
-                            failed_count = details.get('FailedCount', '0')
-                            not_applicable_count = details.get('NotApplicableCount', '0')
-
-                            all_compliance.append({
-                                'Region': region,
-                                'Instance ID': instance_id,
-                                'Compliance Type': compliance_type,
-                                'Status': status,
-                                'Severity': severity,
-                                'Patch Group': patch_group,
-                                'Installed Patches': installed_count,
-                                'Installed Other': installed_other_count,
-                                'Missing Patches': missing_count,
-                                'Failed Patches': failed_count,
-                                'Not Applicable': not_applicable_count,
-                                'Execution Time': execution_time if execution_time else 'N/A'
-                            })
-
-                except Exception as e:
-                    # Some instances may not have compliance data
-                    pass
-
-        except Exception as e:
-            utils.log_error(f"Error collecting patch compliance in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_patch_compliance_region)
+    all_compliance = [item for result in results for item in result]
     utils.log_success(f"Total patch compliance items collected: {len(all_compliance)}")
     return all_compliance
+
+
+def _scan_ssm_parameters_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for SSM parameters."""
+    parameters_data = []
+
+    if not utils.validate_aws_region(region):
+        return parameters_data
+
+    try:
+        ssm_client = utils.get_boto3_client('ssm', region_name=region)
+
+        paginator = ssm_client.get_paginator('describe_parameters')
+        for page in paginator.paginate():
+            parameters = page.get('Parameters', [])
+
+            for parameter in parameters:
+                param_name = parameter.get('Name', 'N/A')
+
+                # Parameter details
+                param_type = parameter.get('Type', 'String')
+                description = parameter.get('Description', 'N/A')
+
+                # Key ID (for SecureString)
+                key_id = parameter.get('KeyId', 'N/A')
+
+                # Last modified
+                last_modified = parameter.get('LastModifiedDate', '')
+                if last_modified:
+                    last_modified = last_modified.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_modified, datetime.datetime) else str(last_modified)
+
+                # Last modified user
+                last_modified_user = parameter.get('LastModifiedUser', 'N/A')
+
+                # Version
+                version = parameter.get('Version', 1)
+
+                # Tier
+                tier = parameter.get('Tier', 'Standard')
+
+                # Policies
+                policies = parameter.get('Policies', [])
+                has_policies = 'Yes' if policies else 'No'
+
+                # Data type
+                data_type = parameter.get('DataType', 'text')
+
+                parameters_data.append({
+                    'Region': region,
+                    'Parameter Name': param_name,
+                    'Parameter Type': param_type,
+                    'Tier': tier,
+                    'Data Type': data_type,
+                    'Description': description,
+                    'KMS Key ID': key_id,
+                    'Last Modified': last_modified if last_modified else 'N/A',
+                    'Last Modified User': last_modified_user,
+                    'Version': version,
+                    'Has Policies': has_policies
+                })
+
+    except Exception as e:
+        utils.log_error(f"Error collecting SSM parameters in {region}", e)
+
+    return parameters_data
 
 
 @utils.aws_error_handler("Collecting SSM parameters", default_return=[])
@@ -301,71 +372,8 @@ def collect_ssm_parameters(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with parameter information
     """
     print("\n=== COLLECTING SSM PARAMETERS ===")
-    all_parameters = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            ssm_client = utils.get_boto3_client('ssm', region_name=region)
-
-            paginator = ssm_client.get_paginator('describe_parameters')
-            for page in paginator.paginate():
-                parameters = page.get('Parameters', [])
-
-                for parameter in parameters:
-                    param_name = parameter.get('Name', 'N/A')
-
-                    print(f"  Processing parameter: {param_name}")
-
-                    # Parameter details
-                    param_type = parameter.get('Type', 'String')
-                    description = parameter.get('Description', 'N/A')
-
-                    # Key ID (for SecureString)
-                    key_id = parameter.get('KeyId', 'N/A')
-
-                    # Last modified
-                    last_modified = parameter.get('LastModifiedDate', '')
-                    if last_modified:
-                        last_modified = last_modified.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_modified, datetime.datetime) else str(last_modified)
-
-                    # Last modified user
-                    last_modified_user = parameter.get('LastModifiedUser', 'N/A')
-
-                    # Version
-                    version = parameter.get('Version', 1)
-
-                    # Tier
-                    tier = parameter.get('Tier', 'Standard')
-
-                    # Policies
-                    policies = parameter.get('Policies', [])
-                    has_policies = 'Yes' if policies else 'No'
-
-                    # Data type
-                    data_type = parameter.get('DataType', 'text')
-
-                    all_parameters.append({
-                        'Region': region,
-                        'Parameter Name': param_name,
-                        'Parameter Type': param_type,
-                        'Tier': tier,
-                        'Data Type': data_type,
-                        'Description': description,
-                        'KMS Key ID': key_id,
-                        'Last Modified': last_modified if last_modified else 'N/A',
-                        'Last Modified User': last_modified_user,
-                        'Version': version,
-                        'Has Policies': has_policies
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting SSM parameters in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_ssm_parameters_region)
+    all_parameters = [parameter for result in results for parameter in result]
     utils.log_success(f"Total SSM parameters collected: {len(all_parameters)}")
     return all_parameters
 
