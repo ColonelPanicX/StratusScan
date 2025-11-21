@@ -95,274 +95,167 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def _scan_sqs_queues_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for SQS queues."""
+    queues_data = []
+    if not utils.validate_aws_region(region):
+        return queues_data
+
+    try:
+        sqs_client = utils.get_boto3_client('sqs', region_name=region)
+        queues_response = sqs_client.list_queues()
+        queue_urls = queues_response.get('QueueUrls', [])
+
+        for queue_url in queue_urls:
+            queue_name = queue_url.split('/')[-1]
+            try:
+                attrs_response = sqs_client.get_queue_attributes(QueueUrl=queue_url, AttributeNames=['All'])
+                attributes = attrs_response.get('Attributes', {})
+
+                queue_arn = attributes.get('QueueArn', 'N/A')
+                is_fifo = queue_name.endswith('.fifo')
+                queue_type = 'FIFO' if is_fifo else 'Standard'
+
+                created_timestamp = attributes.get('CreatedTimestamp', '')
+                created_date_str = datetime.datetime.fromtimestamp(int(created_timestamp)).strftime('%Y-%m-%d %H:%M:%S') if created_timestamp else 'N/A'
+
+                retention_period = attributes.get('MessageRetentionPeriod', '345600')
+                retention_days = int(retention_period) / 86400
+                redrive_policy = attributes.get('RedrivePolicy', None)
+                kms_master_key_id = attributes.get('KmsMasterKeyId', None)
+                content_dedup = attributes.get('ContentBasedDeduplication', 'false') if is_fifo else 'N/A'
+
+                queues_data.append({
+                    'Region': region,
+                    'Queue Name': queue_name,
+                    'Queue Type': queue_type,
+                    'Queue URL': queue_url,
+                    'Queue ARN': queue_arn,
+                    'Created Date': created_date_str,
+                    'Messages Available': attributes.get('ApproximateNumberOfMessages', '0'),
+                    'Messages In Flight': attributes.get('ApproximateNumberOfMessagesNotVisible', '0'),
+                    'Messages Delayed': attributes.get('ApproximateNumberOfMessagesDelayed', '0'),
+                    'Retention Period (days)': round(retention_days, 1),
+                    'Visibility Timeout (sec)': attributes.get('VisibilityTimeout', '30'),
+                    'Delay (sec)': attributes.get('DelaySeconds', '0'),
+                    'Max Message Size (bytes)': attributes.get('MaximumMessageSize', '262144'),
+                    'Receive Wait Time (sec)': attributes.get('ReceiveMessageWaitTimeSeconds', '0'),
+                    'Has Dead Letter Queue': 'Yes' if redrive_policy else 'No',
+                    'Encrypted': 'Yes' if kms_master_key_id else 'No',
+                    'Content-Based Deduplication': content_dedup
+                })
+            except Exception as e:
+                utils.log_warning(f"Could not get attributes for queue {queue_name}: {e}")
+    except Exception as e:
+        utils.log_error(f"Error scanning SQS queues in {region}", e)
+
+    return queues_data
+
+
 @utils.aws_error_handler("Collecting SQS queues", default_return=[])
 def collect_sqs_queues(regions: List[str]) -> List[Dict[str, Any]]:
-    """
-    Collect SQS queue information from AWS regions.
-
-    Args:
-        regions: List of AWS regions to scan
-
-    Returns:
-        list: List of dictionaries with queue information
-    """
+    """Collect SQS queue information from AWS regions."""
     print("\n=== COLLECTING SQS QUEUES ===")
-    all_queues = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            sqs_client = utils.get_boto3_client('sqs', region_name=region)
-
-            # List queues
-            queues_response = sqs_client.list_queues()
-            queue_urls = queues_response.get('QueueUrls', [])
-
-            for queue_url in queue_urls:
-                # Extract queue name from URL
-                queue_name = queue_url.split('/')[-1]
-
-                print(f"  Processing queue: {queue_name}")
-
-                try:
-                    # Get queue attributes
-                    attrs_response = sqs_client.get_queue_attributes(
-                        QueueUrl=queue_url,
-                        AttributeNames=['All']
-                    )
-                    attributes = attrs_response.get('Attributes', {})
-
-                    # Queue ARN
-                    queue_arn = attributes.get('QueueArn', 'N/A')
-
-                    # Queue type
-                    is_fifo = queue_name.endswith('.fifo')
-                    queue_type = 'FIFO' if is_fifo else 'Standard'
-
-                    # Created timestamp
-                    created_timestamp = attributes.get('CreatedTimestamp', '')
-                    if created_timestamp:
-                        created_date = datetime.datetime.fromtimestamp(int(created_timestamp))
-                        created_date_str = created_date.strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        created_date_str = 'N/A'
-
-                    # Message counts
-                    approx_messages = attributes.get('ApproximateNumberOfMessages', '0')
-                    approx_not_visible = attributes.get('ApproximateNumberOfMessagesNotVisible', '0')
-                    approx_delayed = attributes.get('ApproximateNumberOfMessagesDelayed', '0')
-
-                    # Retention period (seconds)
-                    retention_period = attributes.get('MessageRetentionPeriod', '345600')  # Default 4 days
-                    retention_days = int(retention_period) / 86400
-
-                    # Visibility timeout
-                    visibility_timeout = attributes.get('VisibilityTimeout', '30')
-
-                    # Delay seconds
-                    delay_seconds = attributes.get('DelaySeconds', '0')
-
-                    # Max message size
-                    max_message_size = attributes.get('MaximumMessageSize', '262144')  # Default 256KB
-
-                    # Receive wait time
-                    receive_wait_time = attributes.get('ReceiveMessageWaitTimeSeconds', '0')
-
-                    # Dead letter queue
-                    redrive_policy = attributes.get('RedrivePolicy', None)
-                    has_dlq = 'Yes' if redrive_policy else 'No'
-
-                    # Encryption
-                    kms_master_key_id = attributes.get('KmsMasterKeyId', None)
-                    encrypted = 'Yes' if kms_master_key_id else 'No'
-
-                    # Content-based deduplication (FIFO only)
-                    content_dedup = attributes.get('ContentBasedDeduplication', 'false') if is_fifo else 'N/A'
-
-                    all_queues.append({
-                        'Region': region,
-                        'Queue Name': queue_name,
-                        'Queue Type': queue_type,
-                        'Queue URL': queue_url,
-                        'Queue ARN': queue_arn,
-                        'Created Date': created_date_str,
-                        'Messages Available': approx_messages,
-                        'Messages In Flight': approx_not_visible,
-                        'Messages Delayed': approx_delayed,
-                        'Retention Period (days)': round(retention_days, 1),
-                        'Visibility Timeout (sec)': visibility_timeout,
-                        'Delay (sec)': delay_seconds,
-                        'Max Message Size (bytes)': max_message_size,
-                        'Receive Wait Time (sec)': receive_wait_time,
-                        'Has Dead Letter Queue': has_dlq,
-                        'Encrypted': encrypted,
-                        'Content-Based Deduplication': content_dedup
-                    })
-
-                except Exception as e:
-                    utils.log_warning(f"Could not get attributes for queue {queue_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting SQS queues in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_sqs_queues_region)
+    all_queues = [q for result in results for q in result]
     utils.log_success(f"Total SQS queues collected: {len(all_queues)}")
     return all_queues
 
 
+def _scan_sns_topics_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for SNS topics."""
+    topics_data = []
+    if not utils.validate_aws_region(region):
+        return topics_data
+
+    try:
+        sns_client = utils.get_boto3_client('sns', region_name=region)
+        paginator = sns_client.get_paginator('list_topics')
+
+        for page in paginator.paginate():
+            topics = page.get('Topics', [])
+            for topic in topics:
+                topic_arn = topic.get('TopicArn', 'N/A')
+                topic_name = topic_arn.split(':')[-1]
+                try:
+                    attrs_response = sns_client.get_topic_attributes(TopicArn=topic_arn)
+                    attributes = attrs_response.get('Attributes', {})
+
+                    is_fifo = topic_name.endswith('.fifo')
+                    kms_master_key_id = attributes.get('KmsMasterKeyId', None)
+                    delivery_policy = attributes.get('DeliveryPolicy', None)
+
+                    topics_data.append({
+                        'Region': region,
+                        'Topic Name': topic_name,
+                        'Topic Type': 'FIFO' if is_fifo else 'Standard',
+                        'Display Name': attributes.get('DisplayName', 'N/A'),
+                        'Subscriptions Confirmed': attributes.get('SubscriptionsConfirmed', '0'),
+                        'Subscriptions Pending': attributes.get('SubscriptionsPending', '0'),
+                        'Subscriptions Deleted': attributes.get('SubscriptionsDeleted', '0'),
+                        'Has Delivery Policy': 'Yes' if delivery_policy else 'No',
+                        'Encrypted': 'Yes' if kms_master_key_id else 'No',
+                        'Content-Based Deduplication': attributes.get('ContentBasedDeduplication', 'false') if is_fifo else 'N/A',
+                        'Owner': attributes.get('Owner', 'N/A'),
+                        'Topic ARN': topic_arn
+                    })
+                except Exception as e:
+                    utils.log_warning(f"Could not get attributes for topic {topic_name}: {e}")
+    except Exception as e:
+        utils.log_error(f"Error scanning SNS topics in {region}", e)
+
+    return topics_data
+
+
 @utils.aws_error_handler("Collecting SNS topics", default_return=[])
 def collect_sns_topics(regions: List[str]) -> List[Dict[str, Any]]:
-    """
-    Collect SNS topic information from AWS regions.
-
-    Args:
-        regions: List of AWS regions to scan
-
-    Returns:
-        list: List of dictionaries with topic information
-    """
+    """Collect SNS topic information from AWS regions."""
     print("\n=== COLLECTING SNS TOPICS ===")
-    all_topics = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            sns_client = utils.get_boto3_client('sns', region_name=region)
-
-            paginator = sns_client.get_paginator('list_topics')
-            for page in paginator.paginate():
-                topics = page.get('Topics', [])
-
-                for topic in topics:
-                    topic_arn = topic.get('TopicArn', 'N/A')
-                    topic_name = topic_arn.split(':')[-1]
-
-                    print(f"  Processing topic: {topic_name}")
-
-                    try:
-                        # Get topic attributes
-                        attrs_response = sns_client.get_topic_attributes(TopicArn=topic_arn)
-                        attributes = attrs_response.get('Attributes', {})
-
-                        # Display name
-                        display_name = attributes.get('DisplayName', 'N/A')
-
-                        # Topic type
-                        is_fifo = topic_name.endswith('.fifo')
-                        topic_type = 'FIFO' if is_fifo else 'Standard'
-
-                        # Subscription counts
-                        subscriptions_confirmed = attributes.get('SubscriptionsConfirmed', '0')
-                        subscriptions_pending = attributes.get('SubscriptionsPending', '0')
-                        subscriptions_deleted = attributes.get('SubscriptionsDeleted', '0')
-
-                        # Delivery policy
-                        delivery_policy = attributes.get('DeliveryPolicy', None)
-                        has_delivery_policy = 'Yes' if delivery_policy else 'No'
-
-                        # Encryption
-                        kms_master_key_id = attributes.get('KmsMasterKeyId', None)
-                        encrypted = 'Yes' if kms_master_key_id else 'No'
-
-                        # Content-based deduplication (FIFO only)
-                        content_dedup = attributes.get('ContentBasedDeduplication', 'false') if is_fifo else 'N/A'
-
-                        # Owner
-                        owner = attributes.get('Owner', 'N/A')
-
-                        all_topics.append({
-                            'Region': region,
-                            'Topic Name': topic_name,
-                            'Topic Type': topic_type,
-                            'Display Name': display_name,
-                            'Subscriptions Confirmed': subscriptions_confirmed,
-                            'Subscriptions Pending': subscriptions_pending,
-                            'Subscriptions Deleted': subscriptions_deleted,
-                            'Has Delivery Policy': has_delivery_policy,
-                            'Encrypted': encrypted,
-                            'Content-Based Deduplication': content_dedup,
-                            'Owner': owner,
-                            'Topic ARN': topic_arn
-                        })
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get attributes for topic {topic_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting SNS topics in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_sns_topics_region)
+    all_topics = [t for result in results for t in result]
     utils.log_success(f"Total SNS topics collected: {len(all_topics)}")
     return all_topics
 
 
+def _scan_sns_subscriptions_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for SNS subscriptions."""
+    subs_data = []
+    if not utils.validate_aws_region(region):
+        return subs_data
+
+    try:
+        sns_client = utils.get_boto3_client('sns', region_name=region)
+        paginator = sns_client.get_paginator('list_subscriptions')
+
+        for page in paginator.paginate():
+            subscriptions = page.get('Subscriptions', [])
+            for subscription in subscriptions:
+                subscription_arn = subscription.get('SubscriptionArn', 'N/A')
+                topic_arn = subscription.get('TopicArn', 'N/A')
+                topic_name = topic_arn.split(':')[-1] if topic_arn != 'N/A' else 'N/A'
+
+                subs_data.append({
+                    'Region': region,
+                    'Topic Name': topic_name,
+                    'Protocol': subscription.get('Protocol', 'N/A'),
+                    'Endpoint': subscription.get('Endpoint', 'N/A'),
+                    'Status': 'Pending' if subscription_arn == 'PendingConfirmation' else 'Confirmed',
+                    'Owner': subscription.get('Owner', 'N/A'),
+                    'Subscription ARN': subscription_arn,
+                    'Topic ARN': topic_arn
+                })
+    except Exception as e:
+        utils.log_error(f"Error scanning SNS subscriptions in {region}", e)
+
+    return subs_data
+
+
 @utils.aws_error_handler("Collecting SNS subscriptions", default_return=[])
 def collect_sns_subscriptions(regions: List[str]) -> List[Dict[str, Any]]:
-    """
-    Collect SNS subscription information from AWS regions.
-
-    Args:
-        regions: List of AWS regions to scan
-
-    Returns:
-        list: List of dictionaries with subscription information
-    """
+    """Collect SNS subscription information from AWS regions."""
     print("\n=== COLLECTING SNS SUBSCRIPTIONS ===")
-    all_subscriptions = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            sns_client = utils.get_boto3_client('sns', region_name=region)
-
-            paginator = sns_client.get_paginator('list_subscriptions')
-            for page in paginator.paginate():
-                subscriptions = page.get('Subscriptions', [])
-
-                for subscription in subscriptions:
-                    subscription_arn = subscription.get('SubscriptionArn', 'N/A')
-                    topic_arn = subscription.get('TopicArn', 'N/A')
-                    topic_name = topic_arn.split(':')[-1] if topic_arn != 'N/A' else 'N/A'
-
-                    # Protocol
-                    protocol = subscription.get('Protocol', 'N/A')
-
-                    # Endpoint
-                    endpoint = subscription.get('Endpoint', 'N/A')
-
-                    # Owner
-                    owner = subscription.get('Owner', 'N/A')
-
-                    # Status (confirmed or pending)
-                    if subscription_arn == 'PendingConfirmation':
-                        status = 'Pending'
-                    else:
-                        status = 'Confirmed'
-
-                    all_subscriptions.append({
-                        'Region': region,
-                        'Topic Name': topic_name,
-                        'Protocol': protocol,
-                        'Endpoint': endpoint,
-                        'Status': status,
-                        'Owner': owner,
-                        'Subscription ARN': subscription_arn,
-                        'Topic ARN': topic_arn
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting SNS subscriptions in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_sns_subscriptions_region)
+    all_subscriptions = [s for result in results for s in result]
     utils.log_success(f"Total SNS subscriptions collected: {len(all_subscriptions)}")
     return all_subscriptions
 

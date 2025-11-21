@@ -95,247 +95,159 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def _scan_event_buses_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for EventBridge event buses."""
+    buses_data = []
+    if not utils.validate_aws_region(region):
+        return buses_data
+
+    try:
+        events_client = utils.get_boto3_client('events', region_name=region)
+        paginator = events_client.get_paginator('list_event_buses')
+
+        for page in paginator.paginate():
+            for bus in page.get('EventBuses', []):
+                buses_data.append({
+                    'Region': region,
+                    'Event Bus Name': bus.get('Name', 'N/A'),
+                    'Event Bus ARN': bus.get('Arn', 'N/A'),
+                    'Has Policy': 'Yes' if bus.get('Policy') else 'No'
+                })
+    except Exception as e:
+        utils.log_error(f"Error scanning event buses in {region}", e)
+
+    return buses_data
+
+
 @utils.aws_error_handler("Collecting event buses", default_return=[])
 def collect_event_buses(regions: List[str]) -> List[Dict[str, Any]]:
-    """
-    Collect EventBridge event bus information from AWS regions.
-
-    Args:
-        regions: List of AWS regions to scan
-
-    Returns:
-        list: List of dictionaries with event bus information
-    """
+    """Collect EventBridge event bus information from AWS regions."""
     print("\n=== COLLECTING EVENT BUSES ===")
-    all_buses = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            events_client = utils.get_boto3_client('events', region_name=region)
-
-            paginator = events_client.get_paginator('list_event_buses')
-            for page in paginator.paginate():
-                buses = page.get('EventBuses', [])
-
-                for bus in buses:
-                    bus_name = bus.get('Name', 'N/A')
-
-                    print(f"  Processing event bus: {bus_name}")
-
-                    # Bus details
-                    bus_arn = bus.get('Arn', 'N/A')
-
-                    # Policy
-                    policy = bus.get('Policy', None)
-                    has_policy = 'Yes' if policy else 'No'
-
-                    all_buses.append({
-                        'Region': region,
-                        'Event Bus Name': bus_name,
-                        'Event Bus ARN': bus_arn,
-                        'Has Policy': has_policy
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting event buses in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_event_buses_region)
+    all_buses = [b for result in results for b in result]
     utils.log_success(f"Total event buses collected: {len(all_buses)}")
     return all_buses
 
 
+def _scan_event_rules_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for EventBridge rules."""
+    rules_data = []
+    if not utils.validate_aws_region(region):
+        return rules_data
+
+    try:
+        events_client = utils.get_boto3_client('events', region_name=region)
+        buses_response = events_client.list_event_buses()
+
+        for bus in buses_response.get('EventBuses', []):
+            bus_name = bus.get('Name', 'default')
+            try:
+                paginator = events_client.get_paginator('list_rules')
+                for page in paginator.paginate(EventBusName=bus_name):
+                    for rule in page.get('Rules', []):
+                        event_pattern = rule.get('EventPattern', None)
+                        schedule_expression = rule.get('ScheduleExpression', None)
+                        rule_type = 'Event Pattern' if event_pattern else 'Schedule' if schedule_expression else 'Unknown'
+
+                        rules_data.append({
+                            'Region': region,
+                            'Event Bus': bus_name,
+                            'Rule Name': rule.get('Name', 'N/A'),
+                            'State': rule.get('State', 'UNKNOWN'),
+                            'Rule Type': rule_type,
+                            'Schedule Expression': schedule_expression if schedule_expression else 'N/A',
+                            'Has Event Pattern': 'Yes' if event_pattern else 'No',
+                            'Description': rule.get('Description', 'N/A'),
+                            'Managed By': rule.get('ManagedBy', 'Customer'),
+                            'Role ARN': rule.get('RoleArn', 'N/A'),
+                            'Rule ARN': rule.get('Arn', 'N/A')
+                        })
+            except Exception as e:
+                utils.log_warning(f"Could not get rules for bus {bus_name}: {e}")
+    except Exception as e:
+        utils.log_error(f"Error scanning event rules in {region}", e)
+
+    return rules_data
+
+
 @utils.aws_error_handler("Collecting event rules", default_return=[])
 def collect_event_rules(regions: List[str]) -> List[Dict[str, Any]]:
-    """
-    Collect EventBridge rule information from AWS regions.
-
-    Args:
-        regions: List of AWS regions to scan
-
-    Returns:
-        list: List of dictionaries with rule information
-    """
+    """Collect EventBridge rule information from AWS regions."""
     print("\n=== COLLECTING EVENT RULES ===")
-    all_rules = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            events_client = utils.get_boto3_client('events', region_name=region)
-
-            # Get event buses first
-            buses_response = events_client.list_event_buses()
-            buses = buses_response.get('EventBuses', [])
-
-            for bus in buses:
-                bus_name = bus.get('Name', 'default')
-
-                try:
-                    # Get rules for this bus
-                    paginator = events_client.get_paginator('list_rules')
-                    for page in paginator.paginate(EventBusName=bus_name):
-                        rules = page.get('Rules', [])
-
-                        for rule in rules:
-                            rule_name = rule.get('Name', 'N/A')
-
-                            print(f"  Processing rule: {bus_name}/{rule_name}")
-
-                            # Rule details
-                            rule_arn = rule.get('Arn', 'N/A')
-                            state = rule.get('State', 'UNKNOWN')
-                            description = rule.get('Description', 'N/A')
-
-                            # Event pattern or schedule
-                            event_pattern = rule.get('EventPattern', None)
-                            schedule_expression = rule.get('ScheduleExpression', None)
-
-                            rule_type = 'Event Pattern' if event_pattern else 'Schedule' if schedule_expression else 'Unknown'
-
-                            # Managed by
-                            managed_by = rule.get('ManagedBy', 'Customer')
-
-                            # Role ARN
-                            role_arn = rule.get('RoleArn', 'N/A')
-
-                            all_rules.append({
-                                'Region': region,
-                                'Event Bus': bus_name,
-                                'Rule Name': rule_name,
-                                'State': state,
-                                'Rule Type': rule_type,
-                                'Schedule Expression': schedule_expression if schedule_expression else 'N/A',
-                                'Has Event Pattern': 'Yes' if event_pattern else 'No',
-                                'Description': description,
-                                'Managed By': managed_by,
-                                'Role ARN': role_arn,
-                                'Rule ARN': rule_arn
-                            })
-
-                except Exception as e:
-                    utils.log_warning(f"Could not get rules for bus {bus_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting event rules in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_event_rules_region)
+    all_rules = [r for result in results for r in result]
     utils.log_success(f"Total event rules collected: {len(all_rules)}")
     return all_rules
 
 
+def _scan_rule_targets_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for EventBridge rule targets."""
+    targets_data = []
+    if not utils.validate_aws_region(region):
+        return targets_data
+
+    try:
+        events_client = utils.get_boto3_client('events', region_name=region)
+        buses_response = events_client.list_event_buses()
+
+        for bus in buses_response.get('EventBuses', []):
+            bus_name = bus.get('Name', 'default')
+            try:
+                rules_response = events_client.list_rules(EventBusName=bus_name)
+                for rule in rules_response.get('Rules', []):
+                    rule_name = rule.get('Name', '')
+                    try:
+                        targets_response = events_client.list_targets_by_rule(Rule=rule_name, EventBusName=bus_name)
+                        for target in targets_response.get('Targets', []):
+                            target_arn = target.get('Arn', 'N/A')
+
+                            # Determine target type from ARN
+                            target_type = 'Unknown'
+                            if ':lambda:' in target_arn:
+                                target_type = 'Lambda'
+                            elif ':sqs:' in target_arn:
+                                target_type = 'SQS'
+                            elif ':sns:' in target_arn:
+                                target_type = 'SNS'
+                            elif ':kinesis:' in target_arn:
+                                target_type = 'Kinesis'
+                            elif ':states:' in target_arn:
+                                target_type = 'Step Functions'
+                            elif ':events:' in target_arn:
+                                target_type = 'Event Bus'
+                            elif ':logs:' in target_arn:
+                                target_type = 'CloudWatch Logs'
+
+                            retry_policy = target.get('RetryPolicy', {})
+                            targets_data.append({
+                                'Region': region,
+                                'Event Bus': bus_name,
+                                'Rule Name': rule_name,
+                                'Target ID': target.get('Id', 'N/A'),
+                                'Target Type': target_type,
+                                'Target ARN': target_arn,
+                                'Role ARN': target.get('RoleArn', 'N/A'),
+                                'Has Input Transformer': 'Yes' if target.get('InputTransformer') else 'No',
+                                'Has Dead Letter Queue': 'Yes' if target.get('DeadLetterConfig') else 'No',
+                                'Max Retry Attempts': retry_policy.get('MaximumRetryAttempts', 'Default'),
+                                'Max Event Age (seconds)': retry_policy.get('MaximumEventAgeInSeconds', 'Default')
+                            })
+                    except Exception as e:
+                        utils.log_warning(f"Could not get targets for rule {rule_name}: {e}")
+            except Exception as e:
+                utils.log_warning(f"Could not process bus {bus_name}: {e}")
+    except Exception as e:
+        utils.log_error(f"Error scanning rule targets in {region}", e)
+
+    return targets_data
+
+
 @utils.aws_error_handler("Collecting rule targets", default_return=[])
 def collect_rule_targets(regions: List[str]) -> List[Dict[str, Any]]:
-    """
-    Collect EventBridge rule target information from AWS regions.
-
-    Args:
-        regions: List of AWS regions to scan
-
-    Returns:
-        list: List of dictionaries with target information
-    """
+    """Collect EventBridge rule target information from AWS regions."""
     print("\n=== COLLECTING RULE TARGETS ===")
-    all_targets = []
-
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            events_client = utils.get_boto3_client('events', region_name=region)
-
-            # Get event buses
-            buses_response = events_client.list_event_buses()
-            buses = buses_response.get('EventBuses', [])
-
-            for bus in buses:
-                bus_name = bus.get('Name', 'default')
-
-                try:
-                    # Get rules for this bus
-                    rules_response = events_client.list_rules(EventBusName=bus_name)
-                    rules = rules_response.get('Rules', [])
-
-                    for rule in rules:
-                        rule_name = rule.get('Name', '')
-
-                        try:
-                            # Get targets for this rule
-                            targets_response = events_client.list_targets_by_rule(
-                                Rule=rule_name,
-                                EventBusName=bus_name
-                            )
-                            targets = targets_response.get('Targets', [])
-
-                            for target in targets:
-                                target_id = target.get('Id', 'N/A')
-                                target_arn = target.get('Arn', 'N/A')
-
-                                # Determine target type from ARN
-                                target_type = 'Unknown'
-                                if ':lambda:' in target_arn:
-                                    target_type = 'Lambda'
-                                elif ':sqs:' in target_arn:
-                                    target_type = 'SQS'
-                                elif ':sns:' in target_arn:
-                                    target_type = 'SNS'
-                                elif ':kinesis:' in target_arn:
-                                    target_type = 'Kinesis'
-                                elif ':states:' in target_arn:
-                                    target_type = 'Step Functions'
-                                elif ':events:' in target_arn:
-                                    target_type = 'Event Bus'
-                                elif ':logs:' in target_arn:
-                                    target_type = 'CloudWatch Logs'
-
-                                # Role ARN
-                                role_arn = target.get('RoleArn', 'N/A')
-
-                                # Input transformation
-                                input_transformer = target.get('InputTransformer', None)
-                                has_input_transformer = 'Yes' if input_transformer else 'No'
-
-                                # Dead letter config
-                                dead_letter_config = target.get('DeadLetterConfig', None)
-                                has_dlq = 'Yes' if dead_letter_config else 'No'
-
-                                # Retry policy
-                                retry_policy = target.get('RetryPolicy', {})
-                                max_retry_attempts = retry_policy.get('MaximumRetryAttempts', 'Default')
-                                max_event_age = retry_policy.get('MaximumEventAgeInSeconds', 'Default')
-
-                                all_targets.append({
-                                    'Region': region,
-                                    'Event Bus': bus_name,
-                                    'Rule Name': rule_name,
-                                    'Target ID': target_id,
-                                    'Target Type': target_type,
-                                    'Target ARN': target_arn,
-                                    'Role ARN': role_arn,
-                                    'Has Input Transformer': has_input_transformer,
-                                    'Has Dead Letter Queue': has_dlq,
-                                    'Max Retry Attempts': max_retry_attempts,
-                                    'Max Event Age (seconds)': max_event_age
-                                })
-
-                        except Exception as e:
-                            utils.log_warning(f"Could not get targets for rule {rule_name}: {e}")
-
-                except Exception as e:
-                    utils.log_warning(f"Could not process bus {bus_name}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting rule targets in region {region}", e)
-
+    results = utils.scan_regions_concurrent(regions, _scan_rule_targets_region)
+    all_targets = [t for result in results for t in result]
     utils.log_success(f"Total rule targets collected: {len(all_targets)}")
     return all_targets
 

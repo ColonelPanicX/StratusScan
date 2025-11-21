@@ -94,6 +94,86 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def _scan_cloudwatch_alarms_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for CloudWatch alarms."""
+    alarms_data = []
+
+    if not utils.validate_aws_region(region):
+        return alarms_data
+
+    try:
+        cw_client = utils.get_boto3_client('cloudwatch', region_name=region)
+        paginator = cw_client.get_paginator('describe_alarms')
+
+        for page in paginator.paginate():
+            alarms = page.get('MetricAlarms', []) + page.get('CompositeAlarms', [])
+
+            for alarm in alarms:
+                alarm_name = alarm.get('AlarmName', 'N/A')
+                alarm_type = 'Composite' if 'AlarmRule' in alarm else 'Metric'
+                alarm_arn = alarm.get('AlarmArn', 'N/A')
+                description = alarm.get('AlarmDescription', 'N/A')
+                state = alarm.get('StateValue', 'UNKNOWN')
+                state_reason = alarm.get('StateReason', 'N/A')
+
+                state_updated = alarm.get('StateUpdatedTimestamp', '')
+                if state_updated:
+                    state_updated = state_updated.strftime('%Y-%m-%d %H:%M:%S') if isinstance(state_updated, datetime.datetime) else str(state_updated)
+
+                actions_enabled = alarm.get('ActionsEnabled', False)
+
+                if alarm_type == 'Metric':
+                    metric_name = alarm.get('MetricName', 'N/A')
+                    namespace = alarm.get('Namespace', 'N/A')
+                    statistic = alarm.get('Statistic', alarm.get('ExtendedStatistic', 'N/A'))
+                    comparison_operator = alarm.get('ComparisonOperator', 'N/A')
+                    threshold = alarm.get('Threshold', 'N/A')
+                    evaluation_periods = alarm.get('EvaluationPeriods', 'N/A')
+                    period = alarm.get('Period', 'N/A')
+                    treat_missing_data = alarm.get('TreatMissingData', 'notBreaching')
+                    dimensions = alarm.get('Dimensions', [])
+                    dimensions_str = ', '.join([f"{d['Name']}={d['Value']}" for d in dimensions]) if dimensions else 'None'
+
+                    alarms_data.append({
+                        'Region': region,
+                        'Alarm Name': alarm_name,
+                        'Alarm Type': alarm_type,
+                        'State': state,
+                        'State Reason': state_reason,
+                        'State Updated': state_updated if state_updated else 'N/A',
+                        'Actions Enabled': actions_enabled,
+                        'Metric Name': metric_name,
+                        'Namespace': namespace,
+                        'Statistic': statistic,
+                        'Comparison': comparison_operator,
+                        'Threshold': threshold,
+                        'Evaluation Periods': evaluation_periods,
+                        'Period (sec)': period,
+                        'Treat Missing Data': treat_missing_data,
+                        'Dimensions': dimensions_str,
+                        'Description': description,
+                        'Alarm ARN': alarm_arn
+                    })
+                else:
+                    alarm_rule = alarm.get('AlarmRule', 'N/A')
+                    alarms_data.append({
+                        'Region': region,
+                        'Alarm Name': alarm_name,
+                        'Alarm Type': alarm_type,
+                        'State': state,
+                        'State Reason': state_reason,
+                        'State Updated': state_updated if state_updated else 'N/A',
+                        'Actions Enabled': actions_enabled,
+                        'Alarm Rule': alarm_rule,
+                        'Description': description,
+                        'Alarm ARN': alarm_arn
+                    })
+    except Exception as e:
+        utils.log_error(f"Error scanning CloudWatch alarms in {region}", e)
+
+    return alarms_data
+
+
 @utils.aws_error_handler("Collecting CloudWatch alarms", default_return=[])
 def collect_cloudwatch_alarms(regions: List[str]) -> List[Dict[str, Any]]:
     """
@@ -106,104 +186,62 @@ def collect_cloudwatch_alarms(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with alarm information
     """
     print("\n=== COLLECTING CLOUDWATCH ALARMS ===")
-    all_alarms = []
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            cw_client = utils.get_boto3_client('cloudwatch', region_name=region)
-
-            paginator = cw_client.get_paginator('describe_alarms')
-            for page in paginator.paginate():
-                alarms = page.get('MetricAlarms', []) + page.get('CompositeAlarms', [])
-
-                for alarm in alarms:
-                    alarm_name = alarm.get('AlarmName', 'N/A')
-
-                    print(f"  Processing alarm: {alarm_name}")
-
-                    # Alarm type
-                    if 'AlarmRule' in alarm:
-                        alarm_type = 'Composite'
-                    else:
-                        alarm_type = 'Metric'
-
-                    # Alarm details
-                    alarm_arn = alarm.get('AlarmArn', 'N/A')
-                    description = alarm.get('AlarmDescription', 'N/A')
-                    state = alarm.get('StateValue', 'UNKNOWN')
-                    state_reason = alarm.get('StateReason', 'N/A')
-
-                    # State updated
-                    state_updated = alarm.get('StateUpdatedTimestamp', '')
-                    if state_updated:
-                        state_updated = state_updated.strftime('%Y-%m-%d %H:%M:%S') if isinstance(state_updated, datetime.datetime) else str(state_updated)
-
-                    # Actions enabled
-                    actions_enabled = alarm.get('ActionsEnabled', False)
-
-                    # For metric alarms
-                    if alarm_type == 'Metric':
-                        metric_name = alarm.get('MetricName', 'N/A')
-                        namespace = alarm.get('Namespace', 'N/A')
-                        statistic = alarm.get('Statistic', alarm.get('ExtendedStatistic', 'N/A'))
-                        comparison_operator = alarm.get('ComparisonOperator', 'N/A')
-                        threshold = alarm.get('Threshold', 'N/A')
-                        evaluation_periods = alarm.get('EvaluationPeriods', 'N/A')
-                        period = alarm.get('Period', 'N/A')
-                        treat_missing_data = alarm.get('TreatMissingData', 'notBreaching')
-
-                        # Dimensions
-                        dimensions = alarm.get('Dimensions', [])
-                        dimensions_str = ', '.join([f"{d['Name']}={d['Value']}" for d in dimensions]) if dimensions else 'None'
-
-                        all_alarms.append({
-                            'Region': region,
-                            'Alarm Name': alarm_name,
-                            'Alarm Type': alarm_type,
-                            'State': state,
-                            'State Reason': state_reason,
-                            'State Updated': state_updated if state_updated else 'N/A',
-                            'Actions Enabled': actions_enabled,
-                            'Metric Name': metric_name,
-                            'Namespace': namespace,
-                            'Statistic': statistic,
-                            'Comparison': comparison_operator,
-                            'Threshold': threshold,
-                            'Evaluation Periods': evaluation_periods,
-                            'Period (sec)': period,
-                            'Treat Missing Data': treat_missing_data,
-                            'Dimensions': dimensions_str,
-                            'Description': description,
-                            'Alarm ARN': alarm_arn
-                        })
-
-                    # For composite alarms
-                    else:
-                        alarm_rule = alarm.get('AlarmRule', 'N/A')
-
-                        all_alarms.append({
-                            'Region': region,
-                            'Alarm Name': alarm_name,
-                            'Alarm Type': alarm_type,
-                            'State': state,
-                            'State Reason': state_reason,
-                            'State Updated': state_updated if state_updated else 'N/A',
-                            'Actions Enabled': actions_enabled,
-                            'Alarm Rule': alarm_rule,
-                            'Description': description,
-                            'Alarm ARN': alarm_arn
-                        })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting CloudWatch alarms in region {region}", e)
+    # Use concurrent scanning for better performance
+    results = utils.scan_regions_concurrent(regions, _scan_cloudwatch_alarms_region)
+    all_alarms = [alarm for result in results for alarm in result]
 
     utils.log_success(f"Total CloudWatch alarms collected: {len(all_alarms)}")
     return all_alarms
+
+
+def _scan_log_groups_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for CloudWatch log groups."""
+    log_groups_data = []
+
+    if not utils.validate_aws_region(region):
+        return log_groups_data
+
+    try:
+        logs_client = utils.get_boto3_client('logs', region_name=region)
+        paginator = logs_client.get_paginator('describe_log_groups')
+
+        for page in paginator.paginate():
+            log_groups = page.get('logGroups', [])
+
+            for log_group in log_groups:
+                log_group_name = log_group.get('logGroupName', 'N/A')
+                log_group_arn = log_group.get('arn', 'N/A')
+
+                creation_time = log_group.get('creationTime', '')
+                if creation_time:
+                    creation_date = datetime.datetime.fromtimestamp(creation_time / 1000)
+                    creation_date_str = creation_date.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    creation_date_str = 'N/A'
+
+                retention_days = log_group.get('retentionInDays', 'Never Expire')
+                stored_bytes = log_group.get('storedBytes', 0)
+                stored_mb = round(stored_bytes / (1024 * 1024), 2)
+                metric_filter_count = log_group.get('metricFilterCount', 0)
+                kms_key_id = log_group.get('kmsKeyId', None)
+                encrypted = 'Yes' if kms_key_id else 'No'
+
+                log_groups_data.append({
+                    'Region': region,
+                    'Log Group Name': log_group_name,
+                    'Created Date': creation_date_str,
+                    'Retention (days)': retention_days,
+                    'Stored Size (MB)': stored_mb,
+                    'Metric Filter Count': metric_filter_count,
+                    'Encrypted': encrypted,
+                    'KMS Key ID': kms_key_id if kms_key_id else 'N/A',
+                    'Log Group ARN': log_group_arn
+                })
+    except Exception as e:
+        utils.log_error(f"Error scanning log groups in {region}", e)
+
+    return log_groups_data
 
 
 @utils.aws_error_handler("Collecting CloudWatch log groups", default_return=[])
@@ -218,63 +256,10 @@ def collect_log_groups(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with log group information
     """
     print("\n=== COLLECTING CLOUDWATCH LOG GROUPS ===")
-    all_log_groups = []
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            logs_client = utils.get_boto3_client('logs', region_name=region)
-
-            paginator = logs_client.get_paginator('describe_log_groups')
-            for page in paginator.paginate():
-                log_groups = page.get('logGroups', [])
-
-                for log_group in log_groups:
-                    log_group_name = log_group.get('logGroupName', 'N/A')
-
-                    print(f"  Processing log group: {log_group_name}")
-
-                    # Log group details
-                    log_group_arn = log_group.get('arn', 'N/A')
-                    creation_time = log_group.get('creationTime', '')
-                    if creation_time:
-                        creation_date = datetime.datetime.fromtimestamp(creation_time / 1000)
-                        creation_date_str = creation_date.strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        creation_date_str = 'N/A'
-
-                    # Retention
-                    retention_days = log_group.get('retentionInDays', 'Never Expire')
-
-                    # Stored bytes
-                    stored_bytes = log_group.get('storedBytes', 0)
-                    stored_mb = round(stored_bytes / (1024 * 1024), 2)
-
-                    # Metric filter count
-                    metric_filter_count = log_group.get('metricFilterCount', 0)
-
-                    # KMS encryption
-                    kms_key_id = log_group.get('kmsKeyId', None)
-                    encrypted = 'Yes' if kms_key_id else 'No'
-
-                    all_log_groups.append({
-                        'Region': region,
-                        'Log Group Name': log_group_name,
-                        'Created Date': creation_date_str,
-                        'Retention (days)': retention_days,
-                        'Stored Size (MB)': stored_mb,
-                        'Metric Filter Count': metric_filter_count,
-                        'Encrypted': encrypted,
-                        'KMS Key ID': kms_key_id if kms_key_id else 'N/A',
-                        'Log Group ARN': log_group_arn
-                    })
-
-        except Exception as e:
-            utils.log_error(f"Error collecting log groups in region {region}", e)
+    # Use concurrent scanning for better performance
+    results = utils.scan_regions_concurrent(regions, _scan_log_groups_region)
+    all_log_groups = [lg for result in results for lg in result]
 
     utils.log_success(f"Total log groups collected: {len(all_log_groups)}")
     return all_log_groups

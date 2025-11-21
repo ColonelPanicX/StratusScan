@@ -96,6 +96,57 @@ def get_aws_regions():
         return utils.get_default_regions()
 
 
+def _scan_backup_vaults_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for backup vaults."""
+    vaults_data = []
+
+    if not utils.validate_aws_region(region):
+        return vaults_data
+
+    try:
+        backup_client = utils.get_boto3_client('backup', region_name=region)
+        paginator = backup_client.get_paginator('list_backup_vaults')
+
+        for page in paginator.paginate():
+            vaults = page.get('BackupVaultList', [])
+
+            for vault in vaults:
+                vault_name = vault.get('BackupVaultName', '')
+                vault_arn = vault.get('BackupVaultArn', '')
+                creation_date = vault.get('CreationDate', '')
+                if creation_date:
+                    creation_date = creation_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_date, datetime.datetime) else str(creation_date)
+
+                encryption_key_arn = vault.get('EncryptionKeyArn', 'N/A')
+                creator_request_id = vault.get('CreatorRequestId', 'N/A')
+                number_of_recovery_points = vault.get('NumberOfRecoveryPoints', 0)
+                locked = vault.get('Locked', False)
+                min_retention_days = vault.get('MinRetentionDays', 'N/A')
+                max_retention_days = vault.get('MaxRetentionDays', 'N/A')
+
+                lock_date = vault.get('LockDate', '')
+                if lock_date:
+                    lock_date = lock_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(lock_date, datetime.datetime) else str(lock_date)
+
+                vaults_data.append({
+                    'Region': region,
+                    'Vault Name': vault_name,
+                    'Recovery Point Count': number_of_recovery_points,
+                    'Locked': locked,
+                    'Min Retention (days)': min_retention_days,
+                    'Max Retention (days)': max_retention_days,
+                    'Lock Date': lock_date if lock_date else 'N/A',
+                    'Encryption Key ARN': encryption_key_arn,
+                    'Creation Date': creation_date,
+                    'Creator Request ID': creator_request_id,
+                    'Vault ARN': vault_arn
+                })
+    except Exception as e:
+        utils.log_error(f"Error scanning backup vaults in {region}", e)
+
+    return vaults_data
+
+
 @utils.aws_error_handler("Collecting backup vaults", default_return=[])
 def collect_backup_vaults(regions: List[str]) -> List[Dict[str, Any]]:
     """
@@ -108,77 +159,80 @@ def collect_backup_vaults(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with backup vault information
     """
     print("\n=== COLLECTING BACKUP VAULTS ===")
-    all_vaults = []
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            utils.log_error(f"Skipping invalid AWS region: {region}")
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            backup_client = utils.get_boto3_client('backup', region_name=region)
-
-            # Get backup vaults
-            paginator = backup_client.get_paginator('list_backup_vaults')
-            vault_count = 0
-
-            for page in paginator.paginate():
-                vaults = page.get('BackupVaultList', [])
-                vault_count += len(vaults)
-
-                for vault in vaults:
-                    vault_name = vault.get('BackupVaultName', '')
-                    print(f"  Processing vault: {vault_name}")
-
-                    vault_arn = vault.get('BackupVaultArn', '')
-                    creation_date = vault.get('CreationDate', '')
-                    if creation_date:
-                        creation_date = creation_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_date, datetime.datetime) else str(creation_date)
-
-                    # Encryption key
-                    encryption_key_arn = vault.get('EncryptionKeyArn', 'N/A')
-
-                    # Creator request ID
-                    creator_request_id = vault.get('CreatorRequestId', 'N/A')
-
-                    # Number of recovery points
-                    number_of_recovery_points = vault.get('NumberOfRecoveryPoints', 0)
-
-                    # Locked status
-                    locked = vault.get('Locked', False)
-
-                    # Min and max retention
-                    min_retention_days = vault.get('MinRetentionDays', 'N/A')
-                    max_retention_days = vault.get('MaxRetentionDays', 'N/A')
-
-                    # Lock date
-                    lock_date = vault.get('LockDate', '')
-                    if lock_date:
-                        lock_date = lock_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(lock_date, datetime.datetime) else str(lock_date)
-
-                    all_vaults.append({
-                        'Region': region,
-                        'Vault Name': vault_name,
-                        'Recovery Point Count': number_of_recovery_points,
-                        'Locked': locked,
-                        'Min Retention (days)': min_retention_days,
-                        'Max Retention (days)': max_retention_days,
-                        'Lock Date': lock_date if lock_date else 'N/A',
-                        'Encryption Key ARN': encryption_key_arn,
-                        'Creation Date': creation_date,
-                        'Creator Request ID': creator_request_id,
-                        'Vault ARN': vault_arn
-                    })
-
-            print(f"  Found {vault_count} backup vaults")
-
-        except Exception as e:
-            utils.log_error(f"Error processing region {region} for backup vaults", e)
+    # Use concurrent scanning for better performance
+    results = utils.scan_regions_concurrent(regions, _scan_backup_vaults_region)
+    all_vaults = [vault for result in results for vault in result]
 
     utils.log_success(f"Total backup vaults collected: {len(all_vaults)}")
     return all_vaults
+
+
+def _scan_backup_plans_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for backup plans."""
+    plans_data = []
+
+    if not utils.validate_aws_region(region):
+        return plans_data
+
+    try:
+        backup_client = utils.get_boto3_client('backup', region_name=region)
+        paginator = backup_client.get_paginator('list_backup_plans')
+
+        for page in paginator.paginate():
+            plans = page.get('BackupPlansList', [])
+
+            for plan_summary in plans:
+                plan_id = plan_summary.get('BackupPlanId', '')
+                plan_name = plan_summary.get('BackupPlanName', '')
+
+                try:
+                    plan_response = backup_client.get_backup_plan(BackupPlanId=plan_id)
+                    plan = plan_response.get('BackupPlan', {})
+
+                    rules = plan.get('Rules', [])
+                    rule_count = len(rules)
+
+                    rule_summaries = []
+                    for rule in rules:
+                        rule_name = rule.get('RuleName', '')
+                        target_vault = rule.get('TargetBackupVaultName', '')
+                        schedule = rule.get('ScheduleExpression', 'N/A')
+                        rule_summaries.append(f"{rule_name} -> {target_vault} ({schedule})")
+
+                    rules_str = '; '.join(rule_summaries) if rule_summaries else 'N/A'
+                    advanced_backup_settings = plan.get('AdvancedBackupSettings', [])
+                    advanced_count = len(advanced_backup_settings)
+
+                    creation_date = plan_summary.get('CreationDate', '')
+                    if creation_date:
+                        creation_date = creation_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_date, datetime.datetime) else str(creation_date)
+
+                    last_execution_date = plan_summary.get('LastExecutionDate', '')
+                    if last_execution_date:
+                        last_execution_date = last_execution_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_execution_date, datetime.datetime) else str(last_execution_date)
+
+                    version_id = plan_response.get('VersionId', 'N/A')
+                    plan_arn = plan_summary.get('BackupPlanArn', '')
+
+                    plans_data.append({
+                        'Region': region,
+                        'Plan Name': plan_name,
+                        'Plan ID': plan_id,
+                        'Rule Count': rule_count,
+                        'Rules Summary': rules_str,
+                        'Advanced Settings': advanced_count,
+                        'Version ID': version_id,
+                        'Creation Date': creation_date,
+                        'Last Execution': last_execution_date if last_execution_date else 'Never',
+                        'Plan ARN': plan_arn
+                    })
+                except Exception as e:
+                    utils.log_warning(f"Could not get details for backup plan {plan_id}: {e}")
+    except Exception as e:
+        utils.log_error(f"Error scanning backup plans in {region}", e)
+
+    return plans_data
 
 
 @utils.aws_error_handler("Collecting backup plans", default_return=[])
@@ -193,87 +247,65 @@ def collect_backup_plans(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with backup plan information
     """
     print("\n=== COLLECTING BACKUP PLANS ===")
-    all_plans = []
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            backup_client = utils.get_boto3_client('backup', region_name=region)
-
-            # Get backup plans
-            paginator = backup_client.get_paginator('list_backup_plans')
-
-            for page in paginator.paginate():
-                plans = page.get('BackupPlansList', [])
-
-                for plan_summary in plans:
-                    plan_id = plan_summary.get('BackupPlanId', '')
-                    plan_name = plan_summary.get('BackupPlanName', '')
-
-                    try:
-                        # Get plan details
-                        plan_response = backup_client.get_backup_plan(BackupPlanId=plan_id)
-                        plan = plan_response.get('BackupPlan', {})
-
-                        # Rules
-                        rules = plan.get('Rules', [])
-                        rule_count = len(rules)
-
-                        # Summarize rules
-                        rule_summaries = []
-                        for rule in rules:
-                            rule_name = rule.get('RuleName', '')
-                            target_vault = rule.get('TargetBackupVaultName', '')
-                            schedule = rule.get('ScheduleExpression', 'N/A')
-                            rule_summaries.append(f"{rule_name} -> {target_vault} ({schedule})")
-
-                        rules_str = '; '.join(rule_summaries) if rule_summaries else 'N/A'
-
-                        # Advanced backup settings
-                        advanced_backup_settings = plan.get('AdvancedBackupSettings', [])
-                        advanced_count = len(advanced_backup_settings)
-
-                        # Creation date
-                        creation_date = plan_summary.get('CreationDate', '')
-                        if creation_date:
-                            creation_date = creation_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_date, datetime.datetime) else str(creation_date)
-
-                        # Last execution date
-                        last_execution_date = plan_summary.get('LastExecutionDate', '')
-                        if last_execution_date:
-                            last_execution_date = last_execution_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_execution_date, datetime.datetime) else str(last_execution_date)
-
-                        # Version ID
-                        version_id = plan_response.get('VersionId', 'N/A')
-
-                        # ARN
-                        plan_arn = plan_summary.get('BackupPlanArn', '')
-
-                        all_plans.append({
-                            'Region': region,
-                            'Plan Name': plan_name,
-                            'Plan ID': plan_id,
-                            'Rule Count': rule_count,
-                            'Rules Summary': rules_str,
-                            'Advanced Settings': advanced_count,
-                            'Version ID': version_id,
-                            'Creation Date': creation_date,
-                            'Last Execution': last_execution_date if last_execution_date else 'Never',
-                            'Plan ARN': plan_arn
-                        })
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get details for backup plan {plan_id}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting backup plans in region {region}", e)
+    # Use concurrent scanning for better performance
+    results = utils.scan_regions_concurrent(regions, _scan_backup_plans_region)
+    all_plans = [plan for result in results for plan in result]
 
     utils.log_success(f"Total backup plans collected: {len(all_plans)}")
     return all_plans
+
+
+def _scan_backup_selections_region(region: str) -> List[Dict[str, Any]]:
+    """Scan a single region for backup selections."""
+    selections_data = []
+
+    if not utils.validate_aws_region(region):
+        return selections_data
+
+    try:
+        backup_client = utils.get_boto3_client('backup', region_name=region)
+        plan_paginator = backup_client.get_paginator('list_backup_plans')
+
+        for plan_page in plan_paginator.paginate():
+            plans = plan_page.get('BackupPlansList', [])
+
+            for plan_summary in plans:
+                plan_id = plan_summary.get('BackupPlanId', '')
+                plan_name = plan_summary.get('BackupPlanName', '')
+
+                try:
+                    selection_paginator = backup_client.get_paginator('list_backup_selections')
+
+                    for selection_page in selection_paginator.paginate(BackupPlanId=plan_id):
+                        selections = selection_page.get('BackupSelectionsList', [])
+
+                        for selection_summary in selections:
+                            selection_id = selection_summary.get('SelectionId', '')
+                            selection_name = selection_summary.get('SelectionName', '')
+                            iam_role_arn = selection_summary.get('IamRoleArn', 'N/A')
+
+                            creation_date = selection_summary.get('CreationDate', '')
+                            if creation_date:
+                                creation_date = creation_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_date, datetime.datetime) else str(creation_date)
+
+                            creator_request_id = selection_summary.get('CreatorRequestId', 'N/A')
+
+                            selections_data.append({
+                                'Region': region,
+                                'Plan Name': plan_name,
+                                'Selection Name': selection_name,
+                                'Selection ID': selection_id,
+                                'IAM Role ARN': iam_role_arn,
+                                'Creation Date': creation_date,
+                                'Creator Request ID': creator_request_id
+                            })
+                except Exception as e:
+                    utils.log_warning(f"Could not get selections for plan {plan_id}: {e}")
+    except Exception as e:
+        utils.log_error(f"Error scanning backup selections in {region}", e)
+
+    return selections_data
 
 
 @utils.aws_error_handler("Collecting backup selections", default_return=[])
@@ -288,64 +320,10 @@ def collect_backup_selections(regions: List[str]) -> List[Dict[str, Any]]:
         list: List of dictionaries with backup selection information
     """
     print("\n=== COLLECTING BACKUP SELECTIONS ===")
-    all_selections = []
 
-    for region in regions:
-        if not utils.validate_aws_region(region):
-            continue
-
-        print(f"\nProcessing region: {region}")
-
-        try:
-            backup_client = utils.get_boto3_client('backup', region_name=region)
-
-            # Get backup plans first
-            plan_paginator = backup_client.get_paginator('list_backup_plans')
-
-            for plan_page in plan_paginator.paginate():
-                plans = plan_page.get('BackupPlansList', [])
-
-                for plan_summary in plans:
-                    plan_id = plan_summary.get('BackupPlanId', '')
-                    plan_name = plan_summary.get('BackupPlanName', '')
-
-                    try:
-                        # Get selections for this plan
-                        selection_paginator = backup_client.get_paginator('list_backup_selections')
-
-                        for selection_page in selection_paginator.paginate(BackupPlanId=plan_id):
-                            selections = selection_page.get('BackupSelectionsList', [])
-
-                            for selection_summary in selections:
-                                selection_id = selection_summary.get('SelectionId', '')
-                                selection_name = selection_summary.get('SelectionName', '')
-
-                                # IAM role
-                                iam_role_arn = selection_summary.get('IamRoleArn', 'N/A')
-
-                                # Creation date
-                                creation_date = selection_summary.get('CreationDate', '')
-                                if creation_date:
-                                    creation_date = creation_date.strftime('%Y-%m-%d %H:%M:%S') if isinstance(creation_date, datetime.datetime) else str(creation_date)
-
-                                # Creator request ID
-                                creator_request_id = selection_summary.get('CreatorRequestId', 'N/A')
-
-                                all_selections.append({
-                                    'Region': region,
-                                    'Plan Name': plan_name,
-                                    'Selection Name': selection_name,
-                                    'Selection ID': selection_id,
-                                    'IAM Role ARN': iam_role_arn,
-                                    'Creation Date': creation_date,
-                                    'Creator Request ID': creator_request_id
-                                })
-
-                    except Exception as e:
-                        utils.log_warning(f"Could not get selections for plan {plan_id}: {e}")
-
-        except Exception as e:
-            utils.log_error(f"Error collecting backup selections in region {region}", e)
+    # Use concurrent scanning for better performance
+    results = utils.scan_regions_concurrent(regions, _scan_backup_selections_region)
+    all_selections = [selection for result in results for selection in result]
 
     utils.log_success(f"Total backup selections collected: {len(all_selections)}")
     return all_selections
