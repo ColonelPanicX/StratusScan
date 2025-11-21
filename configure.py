@@ -38,13 +38,36 @@ from pathlib import Path
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
+def detect_aws_partition():
+    """
+    Detect the AWS partition (commercial vs govcloud) from caller identity.
+
+    Returns:
+        tuple: (partition, default_region) - e.g., ('aws', 'us-east-1') or ('aws-us-gov', 'us-gov-west-1')
+    """
+    try:
+        sts = boto3.client('sts')
+        identity = sts.get_caller_identity()
+        arn = identity.get('Arn', '')
+
+        if 'aws-us-gov' in arn:
+            return 'aws-us-gov', 'us-gov-west-1'
+        else:
+            return 'aws', 'us-east-1'
+    except:
+        # Default to commercial if detection fails
+        return 'aws', 'us-east-1'
+
 def print_header():
     """Print the configuration tool header."""
+    partition, _ = detect_aws_partition()
+    env_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
     print("=" * 70)
     print("            STRATUSSCAN CONFIGURATION TOOL")
     print("=" * 70)
     print("Version: v1.0.0                             Date: AUG-26-2025")
-    print("Environment: AWS Commercial")
+    print(f"Environment: {env_name}")
     print("=" * 70)
     print()
 
@@ -535,10 +558,15 @@ def get_aws_managed_policy_recommendations():
 def test_aws_permissions():
     """
     Test current AWS permissions by attempting key API calls.
+    Automatically detects partition and uses appropriate region.
 
     Returns:
         dict: Dictionary of permission test results
     """
+    # Detect partition and get appropriate region
+    partition, test_region = detect_aws_partition()
+    is_govcloud = partition == 'aws-us-gov'
+
     permission_tests = {
         'sts:GetCallerIdentity': {
             'test_function': lambda: boto3.client('sts').get_caller_identity(),
@@ -547,7 +575,7 @@ def test_aws_permissions():
             'description': 'Basic AWS authentication verification'
         },
         'ec2:DescribeInstances': {
-            'test_function': lambda: boto3.client('ec2', region_name='us-east-1').describe_instances(MaxResults=5),
+            'test_function': lambda: boto3.client('ec2', region_name=test_region).describe_instances(MaxResults=5),
             'required': True,
             'service': 'Amazon EC2',
             'description': 'List EC2 instances for compute resource scanning'
@@ -565,40 +593,31 @@ def test_aws_permissions():
             'description': 'List IAM users for identity management scanning'
         },
         'rds:DescribeDBInstances': {
-            'test_function': lambda: boto3.client('rds', region_name='us-east-1').describe_db_instances(),
+            'test_function': lambda: boto3.client('rds', region_name=test_region).describe_db_instances(),
             'required': True,
             'service': 'Amazon RDS',
             'description': 'List RDS instances for database resource scanning'
         },
         'ec2:DescribeVpcs': {
-            'test_function': lambda: boto3.client('ec2', region_name='us-east-1').describe_vpcs(),
+            'test_function': lambda: boto3.client('ec2', region_name=test_region).describe_vpcs(),
             'required': True,
             'service': 'Amazon VPC',
             'description': 'List VPCs for network resource scanning'
         },
-        'ce:GetDimensionValues': {
-            'test_function': lambda: boto3.client('ce', region_name='us-east-1').get_dimension_values(
-                TimePeriod={'Start': '2024-01-01', 'End': '2024-01-02'},
-                Dimension='SERVICE'
-            ),
-            'required': False,
-            'service': 'AWS Cost Explorer',
-            'description': 'Access cost data for comprehensive service discovery'
-        },
         'cloudtrail:LookupEvents': {
-            'test_function': lambda: boto3.client('cloudtrail', region_name='us-east-1').lookup_events(MaxItems=1),
+            'test_function': lambda: boto3.client('cloudtrail', region_name=test_region).lookup_events(MaxResults=1),
             'required': False,
             'service': 'AWS CloudTrail',
             'description': 'Access event history for service usage analysis'
         },
         'sso-admin:ListInstances': {
-            'test_function': lambda: boto3.client('sso-admin', region_name='us-east-1').list_instances(),
+            'test_function': lambda: boto3.client('sso-admin', region_name=test_region).list_instances(),
             'required': False,
             'service': 'AWS IAM Identity Center',
             'description': 'List Identity Center instances for SSO analysis'
         },
         'identitystore:ListUsers': {
-            'test_function': lambda: boto3.client('identitystore', region_name='us-east-1').list_users(
+            'test_function': lambda: boto3.client('identitystore', region_name=test_region).list_users(
                 IdentityStoreId='d-example123456'  # This will likely fail but tests the permission
             ),
             'required': False,
@@ -606,6 +625,18 @@ def test_aws_permissions():
             'description': 'Access Identity Store for user/group analysis'
         }
     }
+
+    # Cost Explorer is NOT available in GovCloud - skip this test
+    if not is_govcloud:
+        permission_tests['ce:GetDimensionValues'] = {
+            'test_function': lambda: boto3.client('ce', region_name=test_region).get_dimension_values(
+                TimePeriod={'Start': '2024-01-01', 'End': '2024-01-02'},
+                Dimension='SERVICE'
+            ),
+            'required': False,
+            'service': 'AWS Cost Explorer',
+            'description': 'Access cost data for comprehensive service discovery'
+        }
 
     results = {}
 
@@ -658,9 +689,15 @@ def check_aws_permissions():
         user_arn = identity.get('Arn', 'Unknown')
         account_id = identity.get('Account', 'Unknown')
 
+        # Detect partition
+        partition, test_region = detect_aws_partition()
+        partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
         print(f"\nAWS Identity: {user_arn}")
         print(f"Account ID: {account_id}")
         print(f"User ID: {identity.get('UserId', 'Unknown')}")
+        print(f"Partition: {partition_name}")
+        print(f"Test Region: {test_region}")
 
     except NoCredentialsError:
         print("\n[ERROR] No AWS credentials found!")

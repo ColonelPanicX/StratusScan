@@ -467,6 +467,8 @@ def is_service_available_in_partition(service: str, partition: str = 'aws') -> b
     """
     # Services NOT available in GovCloud (partial list)
     govcloud_unavailable = {
+        'ce',              # Cost Explorer - Not available in GovCloud
+        'globalaccelerator',  # Global Accelerator - Not available in GovCloud
         'trustedadvisor',  # Not available in GovCloud
         'appstream',       # Not available in GovCloud
         'chime',          # Not available in GovCloud
@@ -544,6 +546,29 @@ def get_partition_regions(partition: str = 'aws') -> List[str]:
     else:
         log_warning(f"Unknown partition: {partition}, returning commercial regions")
         return DEFAULT_REGIONS
+
+
+def get_partition_default_region(partition: Optional[str] = None) -> str:
+    """
+    Get the default region for a specific AWS partition.
+
+    Args:
+        partition: AWS partition ('aws' or 'aws-us-gov')
+                  If not provided, auto-detects from current credentials
+
+    Returns:
+        str: Default region for the partition
+             - 'us-gov-west-1' for GovCloud
+             - 'us-east-1' for Commercial AWS
+    """
+    # Auto-detect partition if not provided
+    if partition is None:
+        partition = detect_partition()
+
+    if partition == 'aws-us-gov':
+        return 'us-gov-west-1'
+    else:
+        return 'us-east-1'
 
 
 def get_default_regions(partition: Optional[str] = None) -> List[str]:

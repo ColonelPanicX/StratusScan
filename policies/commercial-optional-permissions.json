@@ -1,10 +1,4 @@
 {
-  "_comment": "StratusScan Optional Permissions - AWS Commercial",
-  "_description": "Optional permissions for advanced StratusScan features in AWS Commercial (aws partition). This policy adds support for ML/AI services (SageMaker, Bedrock, Comprehend, Rekognition), global edge services (CloudFront, Global Accelerator), and mobile/marketing services (Pinpoint). These permissions are additive to the required permissions and can be combined. Compatible with both IAM and IAM Identity Center.",
-  "_partition": "aws",
-  "_regions": "All AWS Commercial regions (CloudFront and Global Accelerator are global services)",
-  "_compliance": "Production-ready IAM policy for read-only security auditing - advanced features",
-  "_usage": "Attach to IAM users, roles, or Identity Center permission sets alongside commercial-required-permissions.json for full StratusScan functionality",
   "Version": "2012-10-17",
   "Statement": [
     {

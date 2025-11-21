@@ -2,6 +2,26 @@
 
 This directory contains IAM policies for StratusScan across AWS Commercial and GovCloud partitions.
 
+## ⭐ Recommended: Use AWS Managed Policies
+
+**The simplest and most maintainable approach is to use AWS Managed Policies instead of custom policies.**
+
+See **[AWS-MANAGED-POLICIES.md](AWS-MANAGED-POLICIES.md)** for detailed instructions.
+
+**Quick Setup** - Attach these 4 AWS Managed Policies:
+- ✓ `ReadOnlyAccess`
+- ✓ `IAMReadOnlyAccess`
+- ✓ `SecurityAudit`
+- ✓ `AWSSupportAccess`
+
+**Benefits**: AWS-maintained, automatically updated, no size limits, works in both Commercial and GovCloud.
+
+---
+
+## Alternative: Custom Inline Policies
+
+If you need custom policies (e.g., for additional restrictions), use the JSON files below.
+
 ## Policy Files
 
 ### AWS Commercial (Partition: `aws`)

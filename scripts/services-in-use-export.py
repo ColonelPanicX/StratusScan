@@ -119,13 +119,17 @@ def print_title():
     Returns:
         tuple: (account_id, account_name)
     """
+    # Detect partition
+    partition = utils.detect_partition()
+    partition_name = "AWS GovCloud (US)" if partition == 'aws-us-gov' else "AWS Commercial"
+
     print("====================================================================")
     print("                   AWS RESOURCE SCANNER                            ")
     print("====================================================================")
     print("AWS SERVICES IN USE DISCOVERY")
     print("====================================================================")
     print("Version: v2.0.0                       Date: SEP-24-2025")
-    print("Environment: AWS Commercial")
+    print(f"Environment: {partition_name}")
     print("====================================================================")
 
     # Get account information
@@ -139,14 +143,23 @@ def print_title():
 def get_services_from_cost_explorer():
     """
     Get services that have incurred costs using Cost Explorer API.
+    NOTE: Cost Explorer is NOT available in GovCloud - this will be skipped.
 
     Returns:
         dict: Dictionary of services with cost information
     """
     services_with_costs = {}
 
+    # Cost Explorer is not available in GovCloud
+    partition = utils.detect_partition()
+    if partition == 'aws-us-gov':
+        utils.log_info("Cost Explorer is not available in AWS GovCloud - skipping cost analysis")
+        return services_with_costs
+
     try:
-        ce_client = utils.get_boto3_client('ce', region_name='us-west-2')
+        # Use appropriate region for partition
+        test_region = 'us-west-2' if partition == 'aws' else 'us-gov-west-1'
+        ce_client = utils.get_boto3_client('ce', region_name=test_region)
 
         # Get cost data for the last 12 months
         end_date = datetime.datetime.now()
@@ -224,7 +237,7 @@ def discover_services_by_resource_enumeration():
         'Amazon CloudWatch': {
             'client': 'cloudwatch',
             'method': 'list_metrics',
-            'check_function': lambda client: len(client.list_metrics(MaxRecords=1)['Metrics']) > 0
+            'check_function': lambda client: len(client.list_metrics()['Metrics']) > 0
         },
         'AWS CloudTrail': {
             'client': 'cloudtrail',
@@ -315,7 +328,15 @@ def discover_services_by_resource_enumeration():
         }
     }
 
-    regions = utils.get_default_regions()
+    # Get appropriate regions for partition
+    partition = utils.detect_partition()
+    if partition == 'aws-us-gov':
+        regions = ['us-gov-west-1', 'us-gov-east-1']
+        default_region = 'us-gov-west-1'
+    else:
+        regions = utils.get_default_regions()
+        default_region = 'us-west-2'
+
     total_checks = len(service_checks) * len(regions)
     current_check = 0
 
@@ -325,7 +346,7 @@ def discover_services_by_resource_enumeration():
             regions_detected = []
 
             # Some services are region-independent
-            check_regions = ['us-west-2'] if check_config.get('region_independent') else regions
+            check_regions = [default_region] if check_config.get('region_independent') else regions
 
             for region in check_regions:
                 current_check += 1
@@ -376,7 +397,10 @@ def get_services_from_cloudtrail():
     cloudtrail_services = {}
 
     try:
-        cloudtrail = utils.get_boto3_client('cloudtrail', region_name='us-west-2')
+        # Use appropriate region for partition
+        partition = utils.detect_partition()
+        test_region = 'us-gov-west-1' if partition == 'aws-us-gov' else 'us-west-2'
+        cloudtrail = utils.get_boto3_client('cloudtrail', region_name=test_region)
 
         utils.log_info("Analyzing CloudTrail event history for service usage...")
 
